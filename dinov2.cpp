@@ -768,6 +768,13 @@ void print_usage(int argc, char **argv, const dino_params &params) {
     fprintf(stderr, "  -fa, --flash_attn          whether to enable flash_attn, less accurate (default: %d)\n",
             params.enable_flash_attn);
     fprintf(stderr, "\n");
+    fprintf(stderr, "Benchmark:\n");
+    fprintf(stderr, "  --bench                 enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
+    fprintf(stderr, "  --bench-runs N          number of timed runs (overrides default 5 when --bench is set)\n");
+    fprintf(stderr, "  --bench-warmup N        number of warmup runs discarded before timing (default: %u)\n",
+            params.bench_warmup);
+    fprintf(stderr, "  --bench-json            emit one JSON object per line to stdout instead of markdown row\n");
+    fprintf(stderr, "\n");
 }
 
 bool dino_params_parse(int argc, char **argv, dino_params &params) {
@@ -790,6 +797,18 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             params.enable_flash_attn = true;
         } else if (arg == "-c" || arg == "--classify") {
             params.classify = true;
+        } else if (arg == "--bench") {
+            // --bench alone: enable bench loop with the default repeat count (5).
+            // --bench-runs N below overrides this if the user supplies a count.
+            if (params.bench_repeats == 0) {
+                params.bench_repeats = 5;
+            }
+        } else if (arg == "--bench-runs") {
+            params.bench_repeats = std::stoi(argv[++i]);
+        } else if (arg == "--bench-warmup") {
+            params.bench_warmup = std::stoi(argv[++i]);
+        } else if (arg == "--bench-json") {
+            params.bench_json = true;
         } else if (arg == "-h" || arg == "--help") {
             print_usage(argc, argv, params);
             exit(0);
