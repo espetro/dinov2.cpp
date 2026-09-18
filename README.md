@@ -54,7 +54,7 @@ The upstream project requires building from source and converting weights yourse
 
 ## Pre-converted GGUF weights
 
-f16 GGUF weights are mirrored to Hugging Face under the [`dinov2-cpp`](https://huggingface.co/dinov2-cpp) org as `dinov2-cpp/<variant>-gguf`. Publishing is rolling out now: CI converts and re-publishes each variant monthly (and on demand) from the official checkpoints:
+f16 GGUF weights are mirrored to Hugging Face under the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) org as `dinov2-cpp-core/<variant>-gguf`. Publishing is rolling out now: CI converts and re-publishes each variant monthly (and on demand) from the official checkpoints:
 
 ```bash
 gh workflow run convert-and-publish-gguf.yml -f variant=all          # all 8 variants

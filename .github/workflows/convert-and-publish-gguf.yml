@@ -114,8 +114,8 @@ jobs:
 
       - name: Ensure target repo exists
         if: env.SKIP != 'true'
-        run: uv run hf repo create dinov2-cpp/${{ matrix.variant }}-gguf --repo_type model --exist_ok
+        run: uv run hf repo create dinov2-cpp-core/${{ matrix.variant }}-gguf --repo_type model --exist_ok
 
       - name: Upload GGUF to Hugging Face
         if: env.SKIP != 'true'
-        run: uv run hf upload dinov2-cpp/${{ matrix.variant }}-gguf ./ggml-model.gguf model.gguf
+        run: uv run hf upload dinov2-cpp-core/${{ matrix.variant }}-gguf ./ggml-model.gguf model.gguf

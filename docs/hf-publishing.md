@@ -2,14 +2,14 @@
 
 The [`convert-and-publish-gguf`](../.github/workflows/convert-and-publish-gguf.yml)
 workflow converts the 8 DINOv2 variants to f16 GGUF and uploads them to the
-`dinov2-cpp/<variant>-gguf` repos on Hugging Face. It runs monthly (cron `0 6 1 * *`)
+`dinov2-cpp-core/<variant>-gguf` repos on Hugging Face. It runs monthly (cron `0 6 1 * *`)
 and on demand via `workflow_dispatch`.
 
 ## One-time setup
 
 1. Create a fine-grained token at https://huggingface.co/settings/tokens:
    - Type: Fine-grained.
-   - Permissions: `Write` access to **Models**, scoped to the `dinov2-cpp` org
+   - Permissions: `Write` access to **Models**, scoped to the `dinov2-cpp-core` org
      (the workflow creates the repos with `hf repo create --exist_ok` if missing).
 2. Add the token as an Actions secret on the GitHub repo:
    ```bash
@@ -33,11 +33,11 @@ and on demand via `workflow_dispatch`.
 
 | Variant | HF repo |
 |---|---|
-| small | `dinov2-cpp/dinov2-small-gguf` |
-| base | `dinov2-cpp/dinov2-base-gguf` |
-| large | `dinov2-cpp/dinov2-large-gguf` |
-| giant | `dinov2-cpp/dinov2-giant-gguf` |
-| small (registers) | `dinov2-cpp/dinov2-with-registers-small-gguf` |
-| base (registers) | `dinov2-cpp/dinov2-with-registers-base-gguf` |
-| large (registers) | `dinov2-cpp/dinov2-with-registers-large-gguf` |
-| giant (registers) | `dinov2-cpp/dinov2-with-registers-giant-gguf` |
+| small | `dinov2-cpp-core/dinov2-small-gguf` |
+| base | `dinov2-cpp-core/dinov2-base-gguf` |
+| large | `dinov2-cpp-core/dinov2-large-gguf` |
+| giant | `dinov2-cpp-core/dinov2-giant-gguf` |
+| small (registers) | `dinov2-cpp-core/dinov2-with-registers-small-gguf` |
+| base (registers) | `dinov2-cpp-core/dinov2-with-registers-base-gguf` |
+| large (registers) | `dinov2-cpp-core/dinov2-with-registers-large-gguf` |
+| giant (registers) | `dinov2-cpp-core/dinov2-with-registers-giant-gguf` |
