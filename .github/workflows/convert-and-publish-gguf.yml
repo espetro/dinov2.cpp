@@ -39,7 +39,7 @@ jobs:
     name: Convert ${{ matrix.variant }}
     needs: validate
     if: ${{ !cancelled() && needs.validate.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-large
     timeout-minutes: 60
     strategy:
       fail-fast: false
