@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UV_VERSION: "0.9.x"
+  HF_HUB_ENABLE_HF_TRANSFER: "1"
 
 jobs:
   validate:
@@ -31,54 +31,30 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
-        with:
-          version: ${{ env.UV_VERSION }}
 
-      - name: Install dependencies
-        run: uv sync
+      - name: Convert dinov2-small (dry run, no upload)
+        run: SKIP_UPLOAD=1 bash scripts/publish-gguf.sh dinov2-small
 
-      - name: Convert dinov2-small (dry run)
-        run: uv run python scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
-
-      - name: Verify GGUF is loadable
-        run: |
-          uv run python - <<'EOF'
-          import gguf
-          reader = gguf.GGUFReader("./ggml-model.gguf")
-          tensors = [t.name for t in reader.tensors]
-          assert len(tensors) > 0, "no tensors in GGUF"
-          print(f"OK: {len(tensors)} tensors")
-          EOF
-
-  convert:
+  publish:
     name: Convert ${{ matrix.variant }}
     needs: validate
     if: ${{ !cancelled() && needs.validate.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-large
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - variant: dinov2-small
-            hf_id: facebook/dinov2-small-imagenet1k-1-layer
           - variant: dinov2-base
-            hf_id: facebook/dinov2-base-imagenet1k-1-layer
           - variant: dinov2-large
-            hf_id: facebook/dinov2-large-imagenet1k-1-layer
           - variant: dinov2-giant
-            hf_id: facebook/dinov2-giant-imagenet1k-1-layer
           - variant: dinov2-with-registers-small
-            hf_id: facebook/dinov2-with-registers-small-imagenet1k-1-layer
           - variant: dinov2-with-registers-base
-            hf_id: facebook/dinov2-with-registers-base-imagenet1k-1-layer
           - variant: dinov2-with-registers-large
-            hf_id: facebook/dinov2-with-registers-large-imagenet1k-1-layer
           - variant: dinov2-with-registers-giant
-            hf_id: facebook/dinov2-with-registers-giant-imagenet1k-1-layer
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_HUB_ENABLE_HF_TRANSFER: "1"
     steps:
       - name: Skip unselected variants (manual dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.variant != 'all' && inputs.variant != matrix.variant }}
@@ -89,35 +65,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         if: env.SKIP != 'true'
-        with:
-          version: ${{ env.UV_VERSION }}
 
-      - name: Free disk space (giant variants)
-        if: env.SKIP != 'true' && contains(matrix.variant, 'giant')
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: false
-
-      - name: Install dependencies
+      - name: Convert and publish ${{ matrix.variant }}
         if: env.SKIP != 'true'
-        run: |
-          uv sync
-          uv tool install 'huggingface_hub[cli]'
-
-      - name: Convert to GGUF
-        if: env.SKIP != 'true'
-        run: uv run python scripts/dinov2-to-gguf.py --model_name ${{ matrix.hf_id }}
-
-      - name: Ensure target repo exists
-        if: env.SKIP != 'true'
-        run: hf repo create dinov2-cpp-core/${{ matrix.variant }}-gguf --repo_type model --exist_ok
-
-      - name: Upload GGUF to Hugging Face
-        if: env.SKIP != 'true'
-        run: hf upload dinov2-cpp-core/${{ matrix.variant }}-gguf ./ggml-model.gguf model.gguf
+        run: bash scripts/publish-gguf.sh "${{ matrix.variant }}"
