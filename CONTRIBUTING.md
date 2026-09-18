@@ -48,33 +48,26 @@ Format violations fail the lint job.
 - Update docs (`README.md`, `docs/`) if you change behavior or interfaces.
 - Follow conventional commit format (e.g. `feat:`, `fix:`, `docs:`, `ci:`).
 
-## Pre-converted GGUF weights
+## Converting weights yourself
 
-f16 GGUF weights are mirrored to Hugging Face under the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) profile as `dinov2-cpp-core/<variant>-gguf`. Publishing is rolling out now: CI converts and re-publishes each variant monthly (and on demand) from the official checkpoints:
+The README's ready-to-download GGUFs live at `dinov2-cpp-core/<variant>-gguf` on Hugging Face. To convert a variant yourself from the upstream PyTorch checkpoints:
 
-```bash
-gh workflow run convert-and-publish-gguf.yml -f variant=all          # all 8 variants
-gh workflow run convert-and-publish-gguf.yml -f variant=dinov2-base  # single variant
-```
-
-Until a given variant appears on HF, convert it yourself in one command:
+| Model | Source checkpoint (PyTorch) |
+|:-----:|:----------------------------|
+| small (no registers) | [facebook/dinov2-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-small-imagenet1k-1-layer) |
+| base (no registers) | [facebook/dinov2-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-base-imagenet1k-1-layer) |
+| large (no registers) | [facebook/dinov2-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-large-imagenet1k-1-layer) |
+| giant (no registers) | [facebook/dinov2-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-giant-imagenet1k-1-layer) |
+| small (registers) | [facebook/dinov2-with-registers-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-small-imagenet1k-1-layer) |
+| base (registers) | [facebook/dinov2-with-registers-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-base-imagenet1k-1-layer) |
+| large (registers) | [facebook/dinov2-with-registers-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-large-imagenet1k-1-layer) |
+| giant (registers) | [facebook/dinov2-with-registers-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-giant-imagenet1k-1-layer) |
 
 ```bash
 python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
 ```
 
-See [docs/hf-publishing.md](docs/hf-publishing.md) for the `HF_TOKEN` setup.
-
-| Model | Source checkpoint | Approx f16 GGUF size |
-|:-----:|:------------------|---------------------:|
-| small (no registers) | [facebook/dinov2-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-small-imagenet1k-1-layer) | ~50 MB |
-| base (no registers) | [facebook/dinov2-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-base-imagenet1k-1-layer) | ~180 MB |
-| large (no registers) | [facebook/dinov2-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-large-imagenet1k-1-layer) | ~620 MB |
-| giant (no registers) | [facebook/dinov2-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-giant-imagenet1k-1-layer) | ~2.2 GB |
-| small (registers) | [facebook/dinov2-with-registers-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-small-imagenet1k-1-layer) | ~50 MB |
-| base (registers) | [facebook/dinov2-with-registers-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-base-imagenet1k-1-layer) | ~180 MB |
-| large (registers) | [facebook/dinov2-with-registers-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-large-imagenet1k-1-layer) | ~620 MB |
-| giant (registers) | [facebook/dinov2-with-registers-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-giant-imagenet1k-1-layer) | ~2.2 GB |
+See [docs/hf-publishing.md](docs/hf-publishing.md) for how CI publishes the mirrors (`HF_TOKEN` setup included).
 
 ## Build from source
 
