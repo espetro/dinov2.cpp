@@ -5,12 +5,8 @@
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include "gguf.h"
-#include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
+#include "src/image.h"
 #include <regex>
-
-
-#define STB_IMAGE_IMPLEMENTATION
 #include <cassert>
 #include <cstddef>
 #include <cstdio>
@@ -103,61 +99,65 @@ static void ggml_disconnect_node_from_graph(ggml_tensor *t) {
     }
 }
 
-cv::Mat dino_classify_preprocess(cv::Mat &img, const cv::Size img_size, const dino_hparams &params) {
-    // 1) Convert to float and resize
-    cv::Mat image;
-    img.convertTo(image, CV_32FC3, 1.0 / 255.0);
-
-    const auto new_size = cv::Size(256, 256);
-    cv::resize(image, image,
-               new_size,
-               0, 0, cv::INTER_CUBIC);
+ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params) {
+    // 1) resize to 256x256 bicubic
+    Image image = resize_bicubic(img, 256, 256);
 
     constexpr int crop_size = 224;
-    const int offset_w = (image.cols - crop_size) / 2;
-    const int offset_h = (image.rows - crop_size) / 2;
-    const cv::Rect roi(offset_w, offset_h, crop_size, crop_size);
-    image = image(roi);
+    const int offset_w = (image.nx - crop_size) / 2;
+    const int offset_h = (image.ny - crop_size) / 2;
 
-    // 3) Channel-wise standardization
-    std::vector<cv::Mat> channels(3);
-    cv::split(image, channels);
-    for (int i = 0; i < 3; ++i) {
-        channels[i] = (channels[i] - IMAGENET_DEFAULT_MEAN[2 - i])
-                      / IMAGENET_DEFAULT_STD[2 - i];
+    // 2) center crop
+    Image cropped;
+    cropped.nx = crop_size;
+    cropped.ny = crop_size;
+    cropped.c = 3;
+    cropped.data.resize((size_t) crop_size * crop_size * 3);
+    for (int y = 0; y < crop_size; ++y) {
+        const uint8_t *src_row = &image.data[((size_t) (offset_h + y) * image.nx + offset_w) * 3];
+        std::memcpy(&cropped.data[(size_t) y * crop_size * 3], src_row, (size_t) crop_size * 3);
     }
-    cv::merge(channels, image);
 
-    return image;
+    // 3) convert to float, scale to [0,1] and channel-wise standardization (RGB)
+    ImageF out;
+    out.nx = crop_size;
+    out.ny = crop_size;
+    out.c = 3;
+    out.data.resize((size_t) crop_size * crop_size * 3);
+    for (size_t i = 0; i < cropped.data.size(); i += 3) {
+        out.data[i + 0] = (cropped.data[i + 0] / 255.0f - IMAGENET_DEFAULT_MEAN[0]) / IMAGENET_DEFAULT_STD[0];
+        out.data[i + 1] = (cropped.data[i + 1] / 255.0f - IMAGENET_DEFAULT_MEAN[1]) / IMAGENET_DEFAULT_STD[1];
+        out.data[i + 2] = (cropped.data[i + 2] / 255.0f - IMAGENET_DEFAULT_MEAN[2]) / IMAGENET_DEFAULT_STD[2];
+    }
+    return out;
 }
 
 
-cv::Mat dino_preprocess(cv::Mat &img, const cv::Size img_size, const dino_hparams &params) {
-    // 1) Convert to float and resize
-    cv::Mat image;
-    img.convertTo(image, CV_32FC3, 1.0 / 255.0);
+ImageF dino_preprocess(const Image &img, const dino_hparams &params) {
+    const auto new_w = (img.nx / params.patch_size + 1) * params.patch_size;
+    const auto new_h = (img.ny / params.patch_size + 1) * params.patch_size;
 
-    const auto new_size = cv::Size((image.cols / params.patch_size + 1) * params.patch_size,
-                                   (image.rows / params.patch_size + 1) * params.patch_size);
-    cv::resize(image, image,
-               new_size,
-               0, 0, cv::INTER_CUBIC);
-
-    // 3) Channel-wise standardization
-    std::vector<cv::Mat> channels(3);
-    cv::split(image, channels);
-    for (int i = 0; i < 3; ++i) {
-        channels[i] = (channels[i] - IMAGENET_DEFAULT_MEAN[2 - i])
-                      / IMAGENET_DEFAULT_STD[2 - i];
+    // 1) resize bicubic and 2) scale to [0,1] + channel-wise standardization (RGB)
+    ImageF image = preprocess_for_dinov2(img, params.patch_size);
+    if (image.nx != new_w || image.ny != new_h) {
+        // fallback: exact resize to the expected multiple of patch_size
+        Image resized = resize_bicubic(img, new_w, new_h);
+        image.nx = new_w;
+        image.ny = new_h;
+        image.c = 3;
+        image.data.resize((size_t) new_w * new_h * 3);
+        for (size_t i = 0; i < image.data.size(); i += 3) {
+            image.data[i + 0] = (resized.data[i + 0] / 255.0f - IMAGENET_DEFAULT_MEAN[0]) / IMAGENET_DEFAULT_STD[0];
+            image.data[i + 1] = (resized.data[i + 1] / 255.0f - IMAGENET_DEFAULT_MEAN[1]) / IMAGENET_DEFAULT_STD[1];
+            image.data[i + 2] = (resized.data[i + 2] / 255.0f - IMAGENET_DEFAULT_MEAN[2]) / IMAGENET_DEFAULT_STD[2];
+        }
     }
-    cv::merge(channels, image);
-
     return image;
 }
 
 
 std::vector<float> interpolate_pos_embed(
-    const cv::Size img_size,
+    const ImgSize img_size,
     const float *pos_embed_data, // Input data shouldn't be modified
     const dino_hparams &hparams) {
     // --- Calculate New Grid Dimensions ---
@@ -192,7 +192,7 @@ std::vector<float> interpolate_pos_embed(
     // Although data is [N, H], we process H slices of [N] shaped spatially.
     for (int c = 0; c < hidden_sz; ++c) {
         // Create a 2D grid for the *original* patches for the current hidden dimension 'c'.
-        cv::Mat src_grid(h_orig, w_orig, CV_32F);
+        std::vector<float> src_grid((size_t) h_orig * w_orig);
 
         // Gather data for the c-th dimension from all original patches.
         for (int i = 0; i < num_patches_orig; ++i) {
@@ -202,12 +202,11 @@ std::vector<float> interpolate_pos_embed(
             // Index for the c-th component of the i-th patch embedding.
             // (i+1) because the first "row" (index 0) is the CLS token.
             size_t input_idx = (size_t) (i + 1) * hidden_sz + c;
-            src_grid.at<float>(y_orig, x_orig) = pos_embed_data[input_idx];
+            src_grid[(size_t) y_orig * w_orig + x_orig] = pos_embed_data[input_idx];
         }
 
         // Resize the 2D grid for the current dimension.
-        cv::Mat dst_grid;
-        cv::resize(src_grid, dst_grid, cv::Size(w_new, h_new), 0, 0, cv::INTER_CUBIC);
+        std::vector<float> dst_grid = resize_bicubic_f32(src_grid.data(), w_orig, h_orig, w_new, h_new);
 
         // Scatter the interpolated data back into the new embedding vector.
         for (int i = 0; i < num_patches_new; ++i) {
@@ -217,7 +216,7 @@ std::vector<float> interpolate_pos_embed(
             // Index for the c-th component of the i-th *new* patch embedding.
             // (i+1) because the first "row" (index 0) is the CLS token.
             size_t output_idx = (size_t) (i + 1) * hidden_sz + c;
-            pos_embed_new[output_idx] = dst_grid.at<float>(y_new, x_new);
+            pos_embed_new[output_idx] = dst_grid[(size_t) y_new * w_new + x_new];
         }
     }
 
@@ -236,7 +235,7 @@ bool do_quantize(const char *name, const struct ggml_tensor *tensor) {
 }
 
 // load the model's weights from a file following the ggml format(gguf)
-bool dino_model_load(const cv::Size img_size, const std::string &fname, dino_model &model, const dino_params &params) {
+bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_model &model, const dino_params &params) {
     printf("%s: loading model from '%s' - please wait\n", __func__, fname.c_str());
 #ifdef GGML_USE_CUDA
     fprintf(stderr, "%s: using CUDA backend\n", __func__);
@@ -310,11 +309,11 @@ bool dino_model_load(const cv::Size img_size, const std::string &fname, dino_mod
 
     // std::cout << "patch size " << hparams.patch_size << std::endl;
 
-    const auto new_size = cv::Size((img_size.width / model.hparams.patch_size + 1) * model.hparams.patch_size,
-                                   (img_size.height / model.hparams.patch_size + 1) * model.hparams.patch_size);
+    const int new_w = (img_size.width / model.hparams.patch_size + 1) * model.hparams.patch_size;
+    const int new_h = (img_size.height / model.hparams.patch_size + 1) * model.hparams.patch_size;
 
-    const int h0 = new_size.height / hparams.patch_size;
-    const int w0 = new_size.width / hparams.patch_size;
+    const int h0 = new_h / hparams.patch_size;
+    const int w0 = new_w / hparams.patch_size;
     const int num_patches = h0 * w0;
     const int model_num_patches = hparams.n_img_embd() * hparams.n_img_embd();
 
@@ -613,7 +612,7 @@ struct ggml_tensor *swiglu_ffn(struct ggml_tensor *cur, const int il, struct ggm
     return cur;
 }
 
-void forward_features(const cv::Size img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
+void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
                       const dino_model &model, const dino_params &params) {
     const uint32_t hidden_size = model.hparams.hidden_size;
     const uint32_t num_hidden_layers = model.hparams.num_hidden_layers;
@@ -789,7 +788,7 @@ void forward_features(const cv::Size img_size, struct ggml_cgraph *graph, struct
     ggml_build_forward_expand(graph, patch_tokens);
 }
 
-void forward_head(const cv::Size img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
+void forward_head(const ImgSize img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
                   const dino_model &model, const dino_params &params) {
     const int32_t n_img_embd = model.hparams.n_img_embd();
 
@@ -821,7 +820,7 @@ void forward_head(const cv::Size img_size, struct ggml_cgraph *graph, struct ggm
 }
 
 struct ggml_cgraph *build_graph(
-    const cv::Size img_size,
+    const ImgSize img_size,
     struct ggml_context *ctx_cgraph,
     const dino_model &model,
     const dino_params &params) {
@@ -855,10 +854,6 @@ void print_usage(int argc, char **argv, const dino_params &params) {
     fprintf(
         stderr, "  -fa, --flash_attn          whether to enable flash_attn, less accurate (default: %d)\n",
         params.enable_flash_attn);
-    fprintf(
-        stderr,
-        "  -cid, --camera_id          the idea of the camera for realtime backbone PCA feature streaming (default: %d)\n",
-        params.camera_id);
     fprintf(stderr, "\n");
 }
 
@@ -878,8 +873,6 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             params.n_threads = std::stoi(argv[++i]);
         } else if (arg == "-k" || arg == "--topk") {
             params.topk = std::stoi(argv[++i]);
-        } else if (arg == "-cid" || arg == "--camera_id") {
-            params.camera_id = std::stoi(argv[++i]);
         } else if (arg == "-fa" || arg == "--flash_attn") {
             params.enable_flash_attn = true;
         } else if (arg == "-c" || arg == "--classify") {
@@ -897,7 +890,7 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
     return true;
 }
 
-std::unique_ptr<dino_output> dino_predict(const dino_model &model, const cv::Mat &img,
+std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img,
                                           const dino_params &params, ggml_gallocr_t allocr) {
     struct ggml_init_params params0 = {
         /*.mem_size   =*/ ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE + ggml_graph_overhead(),
@@ -905,37 +898,28 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const cv::Mat
         /*.no_alloc   =*/ true, // the tensors will be allocated later by ggml_gallocr_alloc_graph()
     };
     struct ggml_context *ctx_cgraph = ggml_init(params0);
-    struct ggml_cgraph *gf = build_graph(img.size(), ctx_cgraph, model, params);
+    struct ggml_cgraph *gf = build_graph({img.nx, img.ny}, ctx_cgraph, model, params);
 
     ggml_gallocr_alloc_graph(allocr, gf);
 
     struct ggml_tensor *input = ggml_graph_get_tensor(gf, "input");
 
-    std::vector<float> planar(img.total() * 3);
-    float *out = planar.data();
-
-    // Split BGR image into channels (OpenCV will do B, G, R)
-    std::vector<cv::Mat> bgr_channels(3);
-    cv::split(img, bgr_channels);
-
-    // Create output Mats for planar format in **RGB order**
-    std::vector<cv::Mat> rgb_planar_channels = {
-        cv::Mat(img.rows, img.cols, CV_32F, out + 0 * img.total()), // R
-        cv::Mat(img.rows, img.cols, CV_32F, out + 1 * img.total()), // G
-        cv::Mat(img.rows, img.cols, CV_32F, out + 2 * img.total()) // B
-    };
-
-    // Copy from BGR channels into RGB-planar layout
-    bgr_channels[2].copyTo(rgb_planar_channels[0]); // R <- from BGR[2]
-    bgr_channels[1].copyTo(rgb_planar_channels[1]); // G <- from BGR[1]
-    bgr_channels[0].copyTo(rgb_planar_channels[2]); // B <- from BGR[0]
+    const size_t npix = (size_t) img.nx * img.ny;
+    // Convert interleaved RGB to planar RGB layout (image is already RGB,
+    // no BGR swap needed)
+    std::vector<float> planar(npix * 3);
+    for (size_t i = 0; i < npix; ++i) {
+        planar[0 * npix + i] = img.data[i * 3 + 0]; // R
+        planar[1 * npix + i] = img.data[i * 3 + 1]; // G
+        planar[2 * npix + i] = img.data[i * 3 + 2]; // B
+    }
 
     ggml_backend_tensor_set(input, planar.data(), 0, ggml_nbytes(input));
 
     const struct ggml_tensor *pos_embed = ggml_get_tensor(model.ctx, "embeddings.position_embeddings");
 
     const std::vector<float> pos_embed_fixed_data = interpolate_pos_embed(
-        img.size(), (float *) (pos_embed->data), model.hparams);
+        {img.nx, img.ny}, (float *) (pos_embed->data), model.hparams);
 
     struct ggml_tensor *pos_embed_fixed = ggml_graph_get_tensor(gf, "pos_embed_fixed");
 
@@ -979,16 +963,12 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const cv::Mat
     } else {
         struct ggml_tensor *patches = ggml_graph_get_tensor(gf, "patch_tokens");
         const float *patch_tokens_data = ggml_get_data_f32(patches);
-        const int h0 = img.rows / model.hparams.patch_size;
-        const int w0 = img.cols / model.hparams.patch_size;
+        const int h0 = img.ny / model.hparams.patch_size;
+        const int w0 = img.nx / model.hparams.patch_size;
         const int num_patches = h0 * w0;
-        // Allocate cv::Mat (which allocates and owns memory)
-        cv::Mat patch_tokens(num_patches, model.hparams.hidden_size, CV_32F);
-        // Copy data from ggml tensor into cv::Mat
-        std::memcpy(patch_tokens.data, patch_tokens_data, num_patches * model.hparams.hidden_size * sizeof(float));
 
-        // Store in your output struct
-        output->patch_tokens = patch_tokens;
+        output->patch_tokens = std::vector<float>(
+            patch_tokens_data, patch_tokens_data + (size_t) num_patches * model.hparams.hidden_size);
     }
 
 

@@ -2,17 +2,14 @@
 
 #include "dinov2.h"
 #include "ggml.h"
-#include <opencv2/core.hpp>
-#include <opencv2/imgcodecs.hpp>
+#include "src/image.h"
 #include "ggml-alloc.h"
-#include "ggml/examples/stb_image.h" // stb image load
 #include <cassert>
 #include <cstddef>
 #include <cstdio>
 #include <fstream>
 #include <map>
 #include <string>
-#include <opencv2/imgproc.hpp>
 
 #include "ggml-backend.h"
 
@@ -33,36 +30,33 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%s: seed = %d\n", __func__, params.seed);
 
     // load the image
-    cv::Mat img = cv::imread(params.fname_inp, cv::IMREAD_COLOR);
-    if (img.empty()) {
+    Image img = load_image(params.fname_inp);
+    if (img.data.empty()) {
         fprintf(stderr, "%s: failed to load image from '%s'\n", __func__, params.fname_inp.c_str());
         return 1;
     }
-    fprintf(stderr, "%s: loaded image '%s' (%d x %d)\n", __func__, params.fname_inp.c_str(), img.size[0], img.size[1]);
-
+    fprintf(stderr, "%s: loaded image '%s' (%d x %d)\n", __func__, params.fname_inp.c_str(), img.nx, img.ny);
 
     // load the model
-    if (!dino_model_load(img.size(), params.model, model, params)) {
+    if (!dino_model_load({img.nx, img.ny}, params.model, model, params)) {
         fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
         return 1;
     }
 
+    ImageF img_f;
     if (params.classify)
-        img = dino_classify_preprocess(img, img.size(), model.hparams);
+        img_f = dino_classify_preprocess(img, model.hparams);
     else
-        img = dino_preprocess(img, img.size(), model.hparams);
+        img_f = dino_preprocess(img, model.hparams);
 
-    cv::Size original_size = img.size();
-
-    fprintf(stderr, "%s: preprocessed image (%d x %d)\n", __func__, img.size[0], img.size[1]);
-
+    fprintf(stderr, "%s: preprocessed image (%d x %d)\n", __func__, img_f.nx, img_f.ny);
 
     // prepare for graph computation, memory allocation and results processing
     {
         ggml_backend_synchronize(model.backend);
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
         int64_t start_time = ggml_time_ms();
-        std::unique_ptr<dino_output> output = dino_predict(model, img, params, allocr);
+        std::unique_ptr<dino_output> output = dino_predict(model, img_f, params, allocr);
         ggml_backend_synchronize(model.backend);
         int64_t end_time = ggml_time_ms();
         fprintf(stderr, "%s: graph computation took %lld ms\n", __func__, end_time - start_time);
@@ -72,33 +66,17 @@ int main(int argc, char **argv) {
         ggml_backend_buffer_free(model.buffer);
         ggml_backend_free(model.backend);
 
+        if (!params.classify && output->patch_tokens) {
+            const int patch_size = model.hparams.patch_size;
+            const int out_w = img_f.nx;
+            const int out_h = img_f.ny;
+            const int n_patches = (img_f.ny / patch_size) * (img_f.nx / patch_size);
 
-        if (!params.classify) {
-            const cv::Mat &patch_tokens = output->patch_tokens.value();
-            cv::PCA pca(patch_tokens, cv::Mat(), cv::PCA::DATA_AS_ROW, 3);
-
-            // project original features into the new 3‑D PCA space
-            cv::Mat projected;
-            pca.project(patch_tokens, projected);
-            // projected: total_pixels×3, CV_32F
-
-            cv::Mat projected_norm;
-            cv::normalize(projected, projected_norm, 0, 255, cv::NORM_MINMAX, CV_8U);
-
-            cv::Mat image = projected_norm.reshape(3, img.rows / model.hparams.patch_size);
-
-            cv::Mat resized_image;
-            cv::resize(image, resized_image, original_size, 0, 0, cv::INTER_NEAREST);
-
-            const std::string filename = params.image_out;
-            if (cv::imwrite(filename, resized_image)) {
-                fprintf(stderr, "%s: Saved image to: %s\n", __func__, filename.c_str());
-            } else {
-                fprintf(stderr, "%s: failed to save image to '%s'\n", __func__, filename.c_str());
-            }
+            pca_project_3d(*output->patch_tokens, n_patches, model.hparams.hidden_size,
+                           out_w, out_h, params.image_out);
+            fprintf(stderr, "%s: Saved image to: %s\n", __func__, params.image_out.c_str());
         }
     }
-
 
     return 0;
 }

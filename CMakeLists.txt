@@ -23,35 +23,14 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -fno-finite-math-only")
 # deps
 add_subdirectory(ggml)
 
-# Find OpenCV, you may need to set OpenCV_DIR variable
-# to the absolute path to the directory containing OpenCVConfig.cmake file
-# via the command line or GUI
-
-# OPTIONAL: set(OpenCV_DIR {PATH TO BUILD FOLDER HERE})
-find_package(OpenCV REQUIRED)
-
-if (NOT OpenCV_FOUND)
-    message(FATAL_ERROR "OpenCV not found. Please set OpenCV_DIR to the directory containing OpenCVConfig.cmake.")
-endif ()
-
-
 # dinov2 executable
-add_executable(inference inference.cpp dinov2.cpp)
-target_link_libraries(inference PRIVATE ${OpenCV_LIBS} PUBLIC ggml)
-target_include_directories(inference PUBLIC .)
+add_executable(inference inference.cpp dinov2.cpp src/image.cpp)
+target_link_libraries(inference PUBLIC ggml)
+target_include_directories(inference PUBLIC . ${CMAKE_CURRENT_SOURCE_DIR})
 
 option(BUILD_QUANTIZE "Build the quantization executable" ON)
-option(BUILD_REALTIME "Build the realtime executable" ON)
-
-
-if (BUILD_REALTIME)
-    add_executable(realtime realtime.cpp dinov2.cpp)
-    target_link_libraries(realtime PRIVATE ${OpenCV_LIBS} PUBLIC ggml)
-    target_include_directories(realtime PUBLIC .)
-endif ()
-
 if (BUILD_QUANTIZE)
-    add_executable(quantize quantize.cpp dinov2.cpp)
-    target_link_libraries(quantize PRIVATE ${OpenCV_LIBS} PUBLIC ggml)
+    add_executable(quantize quantize.cpp dinov2.cpp src/image.cpp)
+    target_link_libraries(quantize PUBLIC ggml)
     target_include_directories(quantize PUBLIC .)
 endif ()

@@ -11,7 +11,12 @@
 #include <optional>
 #include <memory>
 #include <thread>
-#include <opencv2/core/mat.hpp>
+#include "src/image.h"
+
+struct ImgSize {
+    int width = 0;
+    int height = 0;
+};
 
 constexpr float IMAGENET_DEFAULT_MEAN[3] = {0.485f, 0.456f, 0.406f};
 constexpr float IMAGENET_DEFAULT_STD[3] = {0.229f, 0.224f, 0.225f};
@@ -58,7 +63,6 @@ struct dino_params {
     uint32_t seed = 42;
     uint32_t topk = 5;
     bool enable_flash_attn = false;
-    uint8_t camera_id = 0; // camera id for realtime PCA feature streaming
     uint32_t n_threads = std::min(4u, std::thread::hardware_concurrency());;
     bool classify = false;
     std::string model = "../ggml-model-f16.gguf"; // model path
@@ -76,39 +80,39 @@ struct ggml_tensor *mlp(struct ggml_tensor *cur, int il, struct ggml_context *ct
 struct ggml_tensor *swiglu_ffn(struct ggml_tensor *cur, int il, struct ggml_context *ctx_cgraph,
                                const dino_model &model, const dino_params &params);
 
-void forward_features(cv::Size img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
+void forward_features(ImgSize img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
                       const dino_model &model, const dino_params &params);
 
-void forward_head(cv::Size img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
+void forward_head(ImgSize img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
                   const dino_model &model, const dino_params &params);
 
 struct dino_output {
     std::optional<std::vector<uint32_t> > preds;
-    std::optional<cv::Mat> patch_tokens;
+    std::optional<std::vector<float>> patch_tokens; // n_patches x hidden_size, row-major
 };
 
 void print_t_f32(const char *title, const struct ggml_tensor *t, int n);
 
 static void ggml_disconnect_node_from_graph(ggml_tensor *t);
 
-cv::Mat dino_classify_preprocess(cv::Mat &img, cv::Size img_size, const dino_hparams &params);
+ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 
-cv::Mat dino_preprocess(cv::Mat &img, cv::Size img_size, const dino_hparams &params);
+ImageF dino_preprocess(const Image &img, const dino_hparams &params);
 
-bool dino_model_load(cv::Size img_size, const std::string &fname, dino_model &model,
+bool dino_model_load(ImgSize img_size, const std::string &fname, dino_model &model,
                      const dino_params &params);
 
-std::vector<float> interpolate_pos_embed(cv::Size img_size,
+std::vector<float> interpolate_pos_embed(ImgSize img_size,
                                          const float *pos_embed_data,
                                          const dino_hparams &hparams);
 
 struct ggml_cgraph *build_graph(
-    cv::Size img_size,
+    ImgSize img_size,
     struct ggml_context *ctx_cgraph,
     const dino_model &model,
     const dino_params &params);
 
-std::unique_ptr<dino_output> dino_predict(const dino_model &model, const cv::Mat &img,
+std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img,
                                           const dino_params &params, ggml_gallocr_t allocr);
 
 void print_usage(int argc, char **argv, const dino_params &params);
