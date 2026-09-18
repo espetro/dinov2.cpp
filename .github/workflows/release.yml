@@ -133,7 +133,7 @@ jobs:
 
       - name: Install build packages
         run: |
-          brew install ninja ccache
+          brew install ninja ccache libblake3
           brew link --overwrite ninja ccache
 
       - name: ccache
