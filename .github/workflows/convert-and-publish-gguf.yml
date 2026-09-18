@@ -32,12 +32,17 @@ jobs:
     steps:
       - id: set
         run: |
-          ALL='dinov2-small dinov2-base dinov2-large dinov2-giant dinov2-with-registers-small dinov2-with-registers-base dinov2-with-registers-large dinov2-with-registers-giant'
+          # Output a JSON array of variant strings so `fromJson(...)` in the
+          # publish job's matrix can parse it. A space-separated string would
+          # make fromJson throw a workflow-level error.
+          ALL_JSON='["dinov2-small","dinov2-base","dinov2-large","dinov2-giant","dinov2-with-registers-small","dinov2-with-registers-base","dinov2-with-registers-large","dinov2-with-registers-giant"]'
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.variant }}" != "all" ]; then
-            echo "variants=${{ inputs.variant }}" >> "$GITHUB_OUTPUT"
+            # Wrap the single variant name in a JSON array.
+            ONE_JSON="[\"${{ inputs.variant }}\"]"
+            echo "variants=$ONE_JSON" >> "$GITHUB_OUTPUT"
             echo "should_validate=false" >> "$GITHUB_OUTPUT"
           else
-            echo "variants=$ALL" >> "$GITHUB_OUTPUT"
+            echo "variants=$ALL_JSON" >> "$GITHUB_OUTPUT"
             echo "should_validate=true" >> "$GITHUB_OUTPUT"
           fi
 
