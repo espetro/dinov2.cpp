@@ -86,8 +86,7 @@ fi
 # ---- venv setup ------------------------------------------------------------
 # We intentionally install ONLY the runtime deps the conversion script needs
 # (torch CPU, transformers, numpy, gguf, huggingface_hub with hf_transfer +
-# hf_xet) plus the project's local `dinov2_inference` package via
-# PYTHONPATH=src. This avoids pulling timm / torchvision / Pillow /
+# hf_xet). This avoids pulling timm / torchvision / Pillow /
 # memory-profiler (the full pyproject deps) which inflates the venv by ~1 GB
 # and risks running the runner out of disk.
 if [ ! -d "$VENV_DIR" ]; then
@@ -118,10 +117,6 @@ else
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
 fi
-
-# Make the project's `dinov2_inference.types.GGMLNumpyType` importable without
-# installing the whole project (which would re-introduce timm/torchvision/Pillow).
-export PYTHONPATH="${PYTHONPATH:-}:$(pwd)/src"
 
 # Make HF transfer explicit inside the script as well — protects against the
 # caller forgetting to export it.

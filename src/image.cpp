@@ -7,8 +7,6 @@ constexpr float IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#define STB_IMAGE_RESIZE2_IMPLEMENTATION
-#include "stb_image_resize2.h"
 
 #include <algorithm>
 #include <cmath>

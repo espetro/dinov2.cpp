@@ -5,7 +5,14 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoConfig, AutoModelForImageClassification
 from gguf import GGUFWriter, GGUFEndian, GGMLQuantizationType
-from dinov2_inference.types import GGMLNumpyType
+
+# Inline of the deleted src/dinov2_inference.types.GGMLNumpyType.
+# Only F16 and F32 are ever written by this script, so an if/else is
+# clearer than the deleted two-value Enum.
+GGML_NUMPY_TYPE = {
+    GGMLQuantizationType.F32: np.float32,
+    GGMLQuantizationType.F16: np.float16,
+}
 
 
 def get_args() -> argparse.Namespace:
@@ -154,7 +161,7 @@ def save_tensor(
     }:
         ggml_type = GGMLQuantizationType.F32
 
-    np_dtype = GGMLNumpyType[ggml_type.name].value
+    np_dtype = GGML_NUMPY_TYPE[ggml_type]
 
     data = data.astype(np_dtype)
 
