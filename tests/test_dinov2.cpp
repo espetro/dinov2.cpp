@@ -1,5 +1,5 @@
-// unit tests for dinov2.cpp pure functions: do_quantize,
-// dino_hparams math, interpolate_pos_embed, dino_preprocess fallback.
+// unit tests for dinov2.cpp pure functions: dino_hparams math,
+// interpolate_pos_embed, dino_preprocess fallback.
 // No GGUF fixtures required - all tests run on synthetic inputs.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -80,55 +80,6 @@ TEST_CASE("dino_hparams divisibility invariant across DINOv2 family") {
         CHECK(hp.n_enc_head_dim() * c.n == c.h);
         CHECK(hp.n_enc_head_dim() == 64u);
     }
-}
-
-TEST_CASE("do_quantize: matches *weight regex and 2D gate") {
-    CtxGuard g(1024 * 16);
-    REQUIRE(g.ctx != nullptr);
-
-    // Real ggml tensors via ggml_new_tensor_*d. The 2D vs 1D distinction is
-    // enforced by ggml_n_dims() walking tensor->ne[] (see ggml.c).
-    ggml_tensor *t2d_proj      = ggml_new_tensor_2d(g.ctx, GGML_TYPE_F32, 768, 2304); // qkv.weight
-    ggml_tensor *t2d_pos_embed = ggml_new_tensor_2d(g.ctx, GGML_TYPE_F32, 384, 257); // position_embeddings (2D even though rarely quantized)
-    ggml_tensor *t1d_cls_token = ggml_new_tensor_1d(g.ctx, GGML_TYPE_F32, 384);      // cls_token
-    ggml_tensor *t1d_ln_weight = ggml_new_tensor_1d(g.ctx, GGML_TYPE_F32, 384);      // layernorm.weight
-
-    // PATTERN = ".*weight" -> anything ending in 'weight' quantizes IFF 2D.
-    CHECK(do_quantize("encoder.layer.0.attention.attention.qkv.weight", t2d_proj) == true);
-    CHECK(do_quantize("embeddings.patch_embeddings.projection.weight", t2d_proj) == true);
-    CHECK(do_quantize("attention.output.dense.weight", t2d_proj) == true);
-
-    // 1D even with *weight suffix is rejected.
-    CHECK(do_quantize("encoder.layer.0.attention.attention.qkv.weight", t1d_ln_weight) == false);
-
-    // Non-weight names are rejected even when 2D (cls_token / position_embeddings
-    // are 2D but don't end in 'weight'). Note: 'layernorm.weight' DOES end in
-    // 'weight' and matches .*weight, so it's accepted whenever its tensor is 2D.
-    CHECK(do_quantize("embeddings.cls_token", t2d_proj) == false);
-    CHECK(do_quantize("embeddings.position_embeddings", t2d_proj) == false);
-    CHECK(do_quantize("lambda1", t2d_proj) == false);
-    CHECK(do_quantize("encoder.layer.0.layernorm.weight", t2d_pos_embed) == true);
-
-    // regex_match is anchored: 'foo.weightbar' must NOT match because the
-    // entire string is not "<anything>weight".
-    CHECK(do_quantize("foo.weightbar", t2d_proj) == false);
-    CHECK(do_quantize("foo.weightx", t2d_proj) == false);
-
-    // 1D tensors never quantize, even when name matches.
-    CHECK(do_quantize("cls_token.weight", t1d_cls_token) == false);
-    CHECK(do_quantize("cls_token.weight", t1d_ln_weight) == false);
-
-    // Edge case: 0-length 1D tensor with weight-y name.
-    ggml_tensor *t1d_zero = ggml_new_tensor_1d(g.ctx, GGML_TYPE_F32, 0);
-    CHECK(do_quantize("zero.weight", t1d_zero) == false);
-
-    // Edge case: tiny 2D tensor with weight-y name. ggml_n_dims() walks
-    // tensor->ne[] looking for any dim > 1 (see ggml.c: ggml_n_dims). A 0x0
-    // "2D" tensor would actually report n_dims==1, and so would a 1x1 shape
-    // (both dims <= 1). We use (1, 2) so ne[1] > 1 and n_dims genuinely
-    // returns 2, exercising the 2D gate.
-    ggml_tensor *t2d_zero = ggml_new_tensor_2d(g.ctx, GGML_TYPE_F32, 1, 2);
-    CHECK(do_quantize("zero.weight", t2d_zero) == true);
 }
 
 TEST_CASE("interpolate_pos_embed: identity when grid matches img_size") {

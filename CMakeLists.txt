@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(dinov2
+        VERSION 0.3.0
         DESCRIPTION "Inference DINOv2 in plain C/C++ with ggml"
         HOMEPAGE_URL "https://github.com/lavaman131/dinov2.cpp")
 
@@ -49,18 +50,10 @@ function(dinov2_target_flags target)
 endfunction()
 
 # dinov2 executable
-add_executable(inference inference.cpp dinov2.cpp src/image.cpp)
-target_link_libraries(inference PUBLIC ggml)
-target_include_directories(inference PUBLIC . ${CMAKE_CURRENT_SOURCE_DIR})
-dinov2_target_flags(inference)
-
-option(BUILD_QUANTIZE "Build the quantization executable" ON)
-if (BUILD_QUANTIZE)
-    add_executable(quantize quantize.cpp dinov2.cpp src/image.cpp)
-    target_link_libraries(quantize PUBLIC ggml)
-    target_include_directories(quantize PUBLIC .)
-    dinov2_target_flags(quantize)
-endif ()
+add_executable(dinov2-cli dinov2-cli.cpp dinov2.cpp src/image.cpp)
+target_link_libraries(dinov2-cli PUBLIC ggml)
+target_include_directories(dinov2-cli PUBLIC . ${CMAKE_CURRENT_SOURCE_DIR})
+dinov2_target_flags(dinov2-cli)
 
 # tests
 if (DINOV2_BUILD_TESTS)
@@ -70,11 +63,10 @@ if (DINOV2_BUILD_TESTS)
     dinov2_target_flags(test_image)
     add_test(NAME test_image COMMAND test_image)
 
-    # dinov2 library tests: pure-function coverage for do_quantize,
-    # dino_hparams math, interpolate_pos_embed, dino_preprocess fallback.
-    # Links ggml because do_quantize receives a ggml_tensor*. Inherits ggml's
-    # PUBLIC include path for ggml.h; we explicitly add the project root so
-    # `#include "dinov2.h"` resolves and the src/ directory for image.h.
+    # dinov2 library tests: pure-function coverage for dino_hparams math,
+    # interpolate_pos_embed, dino_preprocess fallback. Links ggml because
+    # interpolate_pos_embed / dino_preprocess don't need it but the test
+    # binary is built against the same source as dinov2-cli for cohesion.
     add_executable(test_dinov2 tests/test_dinov2.cpp dinov2.cpp src/image.cpp)
     target_link_libraries(test_dinov2 PUBLIC ggml)
     target_include_directories(test_dinov2 PRIVATE

@@ -17,9 +17,8 @@ struct ImgSize {
     int height = 0;
 };
 
-constexpr float       IMAGENET_DEFAULT_MEAN[3] = {0.485f, 0.456f, 0.406f};
-constexpr float       IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
-constexpr std::string PATTERN                  = ".*weight";
+constexpr float IMAGENET_DEFAULT_MEAN[3] = {0.485f, 0.456f, 0.406f};
+constexpr float IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
 
 uint32_t get_val_u32(const struct gguf_context *ctx, const char *key);
 
@@ -46,8 +45,6 @@ struct dino_hparams {
 
     uint32_t n_img_embd() const;
 };
-
-bool do_quantize(const char *name, const struct ggml_tensor *tensor);
 
 struct dino_model {
     dino_hparams                                hparams;
@@ -113,5 +110,3 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
 void print_usage(int argc, char **argv, const dino_params &params);
 
 bool dino_params_parse(int argc, char **argv, dino_params &params);
-
-bool dino_model_quantize(const std::string &fname_inp, const std::string &fname_out, int itype);

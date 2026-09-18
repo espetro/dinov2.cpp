@@ -209,18 +209,6 @@ std::vector<float> interpolate_pos_embed(const ImgSize       img_size,
     return pos_embed_new;
 }
 
-bool do_quantize(const char *name, const struct ggml_tensor *tensor) {
-    bool quantize = false;
-    if (std::regex_match(name, std::regex(PATTERN))) {
-        quantize = true;
-    }
-
-    // quantize only 2D tensors
-    quantize &= (ggml_n_dims(tensor) == 2);
-
-    return quantize;
-}
-
 // load the model's weights from a file following the ggml format(gguf)
 bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_model &model, const dino_params &params) {
     printf("%s: loading model from '%s' - please wait\n", __func__, fname.c_str());
@@ -332,83 +320,6 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
         ggml_backend_tensor_set(cur, ggml_get_data(src), 0, n_size);
     }
 
-    return true;
-}
-
-bool dino_model_quantize(const std::string &fname_inp, const std::string &fname_out, int itype) {
-    const auto quant_type = static_cast<ggml_type>(itype);
-
-    struct ggml_context    *tmp_ctx     = nullptr;
-    struct gguf_init_params gguf_params = {
-        /*.no_alloc   =*/false,
-        /*.ctx        =*/&tmp_ctx,
-    };
-    gguf_context *gguf_ctx = gguf_init_from_file(fname_inp.c_str(), gguf_params);
-    if (!gguf_ctx) {
-        fprintf(stderr, "%s: gguf_init_from_file() failed\n", __func__);
-        return false;
-    }
-
-    const int num_tensors = gguf_get_n_tensors(gguf_ctx);
-
-    gguf_context *gguf_save = gguf_init_empty();
-    gguf_set_kv(gguf_save, gguf_ctx);
-    gguf_set_val_u32(gguf_save, "ftype", itype);
-
-    std::vector<std::vector<uint8_t>> buffers(num_tensors);
-    ggml_type                         new_type;
-    bool                              do_q = false;
-
-    for (int i = 0; i < num_tensors; i++) {
-        const char               *name   = gguf_get_tensor_name(gguf_ctx, i);
-        const struct ggml_tensor *tensor = ggml_get_tensor(tmp_ctx, name);
-        gguf_add_tensor(gguf_save, tensor);
-
-        auto        &work_bytes = buffers[i];
-        const size_t byte_size  = ggml_nbytes(tensor);
-        work_bytes.resize(byte_size);
-        void  *new_data = work_bytes.data();
-        size_t new_size = 0;
-
-        do_q = do_quantize(name, tensor);
-
-        if (do_q) {
-            new_type                    = quant_type;
-            const bool         is_fp16  = tensor->type == GGML_TYPE_F16;
-            const float       *data_f32 = nullptr;
-            std::vector<float> f16_to_f32;
-            if (is_fp16) {
-                const int64_t ne = ggml_nelements(tensor);
-                f16_to_f32.resize(ne);
-                const uint16_t *src16 = static_cast<uint16_t *>(tensor->data);
-                for (int64_t j = 0; j < ne; ++j) {
-                    f16_to_f32[j] = ggml_fp16_to_fp32(src16[j]);
-                }
-                data_f32 = f16_to_f32.data();
-            } else {
-                data_f32 = ggml_get_data_f32(tensor);
-            }
-            new_size = ggml_quantize_chunk(quant_type, data_f32, new_data, 0, tensor->ne[1], tensor->ne[0], nullptr);
-            if (!ggml_validate_row_data(quant_type, new_data, new_size)) {
-                throw std::runtime_error("quantized data validation failed");
-            }
-        } else {
-            new_type = tensor->type;
-            memcpy(new_data, tensor->data, byte_size);
-            new_size = byte_size;
-        }
-
-        gguf_set_tensor_type(gguf_save, name, new_type);
-        GGML_ASSERT(gguf_get_tensor_size(gguf_save, gguf_find_tensor(gguf_save, name)) == new_size);
-        gguf_set_tensor_data(gguf_save, name, new_data);
-    }
-
-    if (!gguf_write_to_file(gguf_save, fname_out.c_str(), false)) {
-        fprintf(stderr, "failed to write GGUF file\n");
-    }
-
-    gguf_free(gguf_ctx);
-    gguf_free(gguf_save);
     return true;
 }
 
