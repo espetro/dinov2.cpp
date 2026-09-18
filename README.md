@@ -54,7 +54,20 @@ The upstream project requires building from source and converting weights yourse
 
 ## Pre-converted GGUF weights
 
-f16 GGUF weights are mirrored to Hugging Face under the `dinov2-cpp/*-gguf` org. Publishing is rolling out now: CI converts and publishes each variant monthly from the official checkpoints. Until a given variant appears, convert it yourself in one command:
+f16 GGUF weights are mirrored to Hugging Face under the [`dinov2-cpp`](https://huggingface.co/dinov2-cpp) org as `dinov2-cpp/<variant>-gguf`. Publishing is rolling out now: CI converts and re-publishes each variant monthly (and on demand) from the official checkpoints:
+
+```bash
+gh workflow run convert-and-publish-gguf.yml -f variant=all          # all 8 variants
+gh workflow run convert-and-publish-gguf.yml -f variant=dinov2-base  # single variant
+```
+
+Until a given variant appears on HF, convert it yourself in one command (see table below for source checkpoints):
+
+```bash
+python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
+```
+
+See [docs/hf-publishing.md](docs/hf-publishing.md) for the `HF_TOKEN` setup.
 
 ```bash
 python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
