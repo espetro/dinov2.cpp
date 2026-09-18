@@ -1,0 +1,228 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ubuntu-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-x64-${{ hashFiles('.github/workflows/release.yml') }}
+          restore-keys: apt-${{ runner.os }}-x64-
+
+      - name: Install build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache cmake
+          dpkg-query -W -f='${Package} ${Version}\n' ninja-build ccache cmake > /tmp/apt-fingerprint.txt
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          max-size: 500MB
+          evict-old-files: 7d
+
+      - name: Configure
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_INSTALL_RPATH='$ORIGIN'
+          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+          -DBUILD_SHARED_LIBS=OFF
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Package
+        run: |
+          mkdir -p stage/bin
+          cp build/bin/inference build/bin/quantize stage/bin/
+          tar -czf "dinov2-${{ github.ref_name }}-bin-ubuntu-x64.tar.gz" -C stage bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dinov2-bin-linux-x64
+          path: dinov2-*-bin-ubuntu-x64.tar.gz
+          if-no-files-found: error
+
+  ubuntu-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-arm64-${{ hashFiles('.github/workflows/release.yml') }}
+          restore-keys: apt-${{ runner.os }}-arm64-
+
+      - name: Install build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache cmake
+          dpkg-query -W -f='${Package} ${Version}\n' ninja-build ccache cmake > /tmp/apt-fingerprint.txt
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          max-size: 500MB
+          evict-old-files: 7d
+
+      - name: Configure
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_INSTALL_RPATH='$ORIGIN'
+          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+          -DBUILD_SHARED_LIBS=OFF
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Package
+        run: |
+          mkdir -p stage/bin
+          cp build/bin/inference build/bin/quantize stage/bin/
+          tar -czf "dinov2-${{ github.ref_name }}-bin-ubuntu-arm64.tar.gz" -C stage bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dinov2-bin-linux-arm64
+          path: dinov2-*-bin-ubuntu-arm64.tar.gz
+          if-no-files-found: error
+
+  macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache brew formulas
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/Cellar/ninja
+            /usr/local/Cellar/ccache
+            /opt/homebrew/Cellar/ninja
+            /opt/homebrew/Cellar/ccache
+          key: brew-${{ runner.os }}-${{ runner.arch }}-ninja-ccache
+          restore-keys: brew-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install build packages
+        run: |
+          brew install ninja ccache
+          brew link --overwrite ninja ccache
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          max-size: 500MB
+          evict-old-files: 7d
+
+      - name: Configure
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_BUILD_RPATH='@loader_path'
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
+          -DBUILD_SHARED_LIBS=OFF
+
+      - name: Build
+        run: cmake --build build -j"$(sysctl -n hw.logicalcpu)"
+
+      - name: Package
+        run: |
+          mkdir -p stage/bin
+          cp build/bin/inference build/bin/quantize stage/bin/
+          tar -czf "dinov2-${{ github.ref_name }}-bin-macos-arm64.tar.gz" -C stage bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dinov2-bin-macos-arm64
+          path: dinov2-*-bin-macos-arm64.tar.gz
+          if-no-files-found: error
+
+  windows-x64:
+    runs-on: windows-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_CACHE_SIZE: 500MB
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.9
+
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake -B build -G "Ninja Multi-Config"
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_SHARED_LIBS=OFF
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage/bin | Out-Null
+          Copy-Item build/bin/Release/inference.exe,build/bin/Release/quantize.exe stage/bin/
+          Compress-Archive -Path stage/bin -DestinationPath dinov2-bin-win-cpu-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dinov2-bin-win-cpu-x64
+          path: dinov2-bin-win-cpu-x64.zip
+          if-no-files-found: error
+
+  release:
+    needs: [ubuntu-x64, ubuntu-arm64, macos-arm64, windows-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**
+          generate_release_notes: true
