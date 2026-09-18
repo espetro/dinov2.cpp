@@ -1,4 +1,5 @@
 Benchmark results summary:
+Note: the realtime rows in this file were produced by the deprecated ./bin/realtime binary, which has been removed.
 | Model  | Speed (ms)    | Mem (MB)          |
 | :----: | :-----------: | :---------------: |
 |   small |    5 ms     |   14 MB        |
