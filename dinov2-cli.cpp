@@ -3,7 +3,15 @@
 #include "ggml.h"
 #include "src/image.h"
 #include "ggml-alloc.h"
+#if defined(_WIN32)
+#include <windows.h>
+#include <psapi.h>
+#if defined(_MSC_VER)
+#pragma comment(lib, "psapi.lib")
+#endif
+#else
 #include <sys/resource.h>
+#endif
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -93,8 +101,10 @@ int main(int argc, char **argv) {
             // We intentionally skip the PCA visualization here -- --bench is for perf only.
             std::vector<double> samples;
             samples.reserve(params.bench_repeats);
-            size_t        peak_rss_kb = 0;
+            size_t peak_rss_kb = 0;
+#ifndef _WIN32
             struct rusage ru;
+#endif
             for (uint32_t i = 0; i < params.bench_warmup + params.bench_repeats; ++i) {
                 int64_t                      t0     = ggml_time_ms();
                 std::unique_ptr<dino_output> output = dino_predict(model, img_f, params, allocr);
@@ -103,6 +113,15 @@ int main(int argc, char **argv) {
                 if (i >= params.bench_warmup) {
                     samples.push_back((double) dt_ms);
                 }
+#ifdef _WIN32
+                PROCESS_MEMORY_COUNTERS pmc;
+                if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+                    size_t kb = (size_t) pmc.PeakWorkingSetSize / 1024;
+                    if (kb > peak_rss_kb) {
+                        peak_rss_kb = kb;
+                    }
+                }
+#else
                 if (getrusage(RUSAGE_SELF, &ru) == 0) {
                     size_t kb = (size_t) ru.ru_maxrss;
 #if defined(__APPLE__)
@@ -113,6 +132,7 @@ int main(int argc, char **argv) {
                         peak_rss_kb = kb;
                     }
                 }
+#endif
                 // Drop `output` to free any per-call buffers before the next iteration.
                 output.reset();
             }
