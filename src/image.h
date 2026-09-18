@@ -36,4 +36,4 @@ ImageF preprocess_for_dinov2(const Image &src, int target_size);
 // components via power iteration with deflation, normalize per channel to
 // 0-255, and write an upscaled RGB PNG to out_path.
 void pca_project_3d(const std::vector<float> &patch_tokens, int n_patches, int dim,
-                    int out_w, int out_h, const std::string &out_path);
+                    int grid_w, int grid_h, int out_w, int out_h, const std::string &out_path);

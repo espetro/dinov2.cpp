@@ -181,10 +181,29 @@ ImageF preprocess_for_dinov2(const Image &src, int target_size) {
 // ---------------------------------------------------------------------------
 
 void pca_project_3d(const std::vector<float> &patch_tokens, int n_patches, int dim,
-                    int out_w, int out_h, const std::string &out_path) {
+                    int grid_w, int grid_h, int out_w, int out_h, const std::string &out_path) {
     if (n_patches <= 0 || dim <= 0 || (int) patch_tokens.size() < n_patches * dim) {
         fprintf(stderr, "%s: invalid input\n", __func__);
         return;
+    }
+
+    // patch-grid dims must cover exactly n_patches
+    int gw = grid_w;
+    int gh = grid_h;
+    if (gw <= 0 || gh <= 0 || gw * gh != n_patches) {
+        // fall back: try divisors of n_patches closest to a square grid
+        gw = (int) std::lround(std::sqrt((double) n_patches));
+        while (gw > 1 && n_patches % gw != 0) {
+            --gw;
+        }
+        gh = n_patches / gw;
+        if (gw * gh != n_patches) {
+            fprintf(stderr, "%s: could not derive patch-grid dims for %d patches, skipping\n",
+                    __func__, n_patches);
+            return;
+        }
+        fprintf(stderr, "%s: invalid grid dims %d x %d, using %d x %d instead\n",
+                __func__, grid_w, grid_h, gw, gh);
     }
 
     // mean-center tokens
@@ -289,9 +308,7 @@ void pca_project_3d(const std::vector<float> &patch_tokens, int n_patches, int d
         }
     }
 
-    // reshape to patch grid and nearest-neighbor upscale to out_w x out_h
-    const int gw = out_w > 0 ? out_w : n_patches;
-    const int gh = n_patches / (gw > 0 ? gw : 1);
+    // reshape to patch grid and upscale to out_w x out_h
     Image patch_img;
     patch_img.nx = gw;
     patch_img.ny = gh;

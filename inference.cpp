@@ -71,9 +71,11 @@ int main(int argc, char **argv) {
             const int out_w = img_f.nx;
             const int out_h = img_f.ny;
             const int n_patches = (img_f.ny / patch_size) * (img_f.nx / patch_size);
+            const int grid_w = img_f.nx / patch_size;
+            const int grid_h = img_f.ny / patch_size;
 
             pca_project_3d(*output->patch_tokens, n_patches, model.hparams.hidden_size,
-                           out_w, out_h, params.image_out);
+                           grid_w, grid_h, out_w, out_h, params.image_out);
             fprintf(stderr, "%s: Saved image to: %s\n", __func__, params.image_out.c_str());
         }
     }
