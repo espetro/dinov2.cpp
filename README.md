@@ -8,7 +8,6 @@ Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system d
 [![CI](https://github.com/espetro/dinov2.cpp/actions/workflows/build.yml/badge.svg)](https://github.com/espetro/dinov2.cpp/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg)
-![Topics](https://img.shields.io/github/topics/espetro/dinov2.cpp?style=flat)
 
 **Latest release: [v0.3.0](https://github.com/espetro/dinov2.cpp/releases/tag/v0.3.0)**
 
@@ -96,29 +95,3 @@ Forked from [lavaman131/dinov2.cpp](https://github.com/lavaman131/dinov2.cpp). B
 ## License
 
 [MIT](LICENSE)
-
-## Topics
-
-Each GitHub repository topic surfaced by `git repo topics` (or clickable
-from the repo sidebar) maps to a discoverability surface:
-
-- [dinov2](https://github.com/topics/dinov2) — the Meta vision transformer
-  this repo ports.
-- [ggml](https://github.com/topics/ggml) — the inference framework; sister
-  project `ggerganov/llama.cpp` self-tags the same way.
-- [gguf](https://github.com/topics/gguf) — the weight format this repo
-  consumes and publishes to Hugging Face.
-- [cpp](https://github.com/topics/cpp) — primary language.
-- [transformer](https://github.com/topics/transformer) — model family.
-- [computer-vision](https://github.com/topics/computer-vision) — project
-  domain.
-- [inference](https://github.com/topics/inference) — what the binary does.
-- [image-classification](https://github.com/topics/image-classification) —
-  `-c` flag mode of `dinov2-cli`.
-- [self-supervised-learning](https://github.com/topics/self-supervised-learning)
-  — the training paradigm behind DINOv2.
-- [cmake](https://github.com/topics/cmake) — build system; matches the
-  cross-platform release pipeline.
-- [huggingface](https://github.com/topics/huggingface) — distribution
-  channel for the 8 pre-converted GGUF repos on
-  [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core).
