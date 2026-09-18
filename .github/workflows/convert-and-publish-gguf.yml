@@ -60,9 +60,12 @@ jobs:
           - variant: dinov2-with-registers-giant
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      # Pin HF cache path explicitly so scripts/publish-gguf.sh's cleanup step
-      # can find and rm-rf the checkpoint directory regardless of runner defaults.
-      HF_HOME: ${{ runner.home }}/.cache/huggingface
+      # GitHub-hosted Linux runners use /home/runner as $HOME, so the HF cache
+      # lands at /home/runner/.cache/huggingface. Pin it explicitly so the
+      # cleanup step in scripts/publish-gguf.sh can find and rm-rf the
+      # checkpoint directory without guessing. (runner.home isn't allowed in
+      # env: expressions — only in steps / runs-on contexts.)
+      HF_HOME: /home/runner/.cache/huggingface
     steps:
       - name: Skip unselected variants (manual dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.variant != 'all' && inputs.variant != matrix.variant }}
