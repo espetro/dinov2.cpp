@@ -39,7 +39,12 @@ jobs:
     name: Convert ${{ matrix.variant }}
     needs: validate
     if: ${{ !cancelled() && needs.validate.result == 'success' }}
-    runs-on: ubuntu-latest-large
+    # Stays on ubuntu-latest (~14 GB free) instead of ubuntu-latest-large.
+    # The conversion script installs a lean torch-CPU + transformers venv and
+    # aggressively clears the HF hub cache after upload, which is enough to fit
+    # the giant variant (~3 GB checkpoint + ~1.4 GB F16 GGUF + ~800 MB venv).
+    # See scripts/publish-gguf.sh for the disk strategy.
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -55,6 +60,9 @@ jobs:
           - variant: dinov2-with-registers-giant
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      # Pin HF cache path explicitly so scripts/publish-gguf.sh's cleanup step
+      # can find and rm-rf the checkpoint directory regardless of runner defaults.
+      HF_HOME: ${{ runner.home }}/.cache/huggingface
     steps:
       - name: Skip unselected variants (manual dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.variant != 'all' && inputs.variant != matrix.variant }}
