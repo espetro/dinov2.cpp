@@ -21,7 +21,7 @@
 int main(int argc, char **argv) {
     ggml_time_init();
     dino_params params;
-    dino_model model;
+    dino_model  model;
 
     if (dino_params_parse(argc, argv, params) == false) {
         return 1;
@@ -44,19 +44,20 @@ int main(int argc, char **argv) {
     }
 
     ImageF img_f;
-    if (params.classify)
+    if (params.classify) {
         img_f = dino_classify_preprocess(img, model.hparams);
-    else
+    } else {
         img_f = dino_preprocess(img, model.hparams);
+    }
 
     fprintf(stderr, "%s: preprocessed image (%d x %d)\n", __func__, img_f.nx, img_f.ny);
 
     // prepare for graph computation, memory allocation and results processing
     {
         ggml_backend_synchronize(model.backend);
-        ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
-        int64_t start_time = ggml_time_ms();
-        std::unique_ptr<dino_output> output = dino_predict(model, img_f, params, allocr);
+        ggml_gallocr_t               allocr     = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
+        int64_t                      start_time = ggml_time_ms();
+        std::unique_ptr<dino_output> output     = dino_predict(model, img_f, params, allocr);
         ggml_backend_synchronize(model.backend);
         int64_t end_time = ggml_time_ms();
         fprintf(stderr, "%s: graph computation took %lld ms\n", __func__, end_time - start_time);
@@ -68,14 +69,14 @@ int main(int argc, char **argv) {
 
         if (!params.classify && output->patch_tokens) {
             const int patch_size = model.hparams.patch_size;
-            const int out_w = img_f.nx;
-            const int out_h = img_f.ny;
-            const int n_patches = (img_f.ny / patch_size) * (img_f.nx / patch_size);
-            const int grid_w = img_f.nx / patch_size;
-            const int grid_h = img_f.ny / patch_size;
+            const int out_w      = img_f.nx;
+            const int out_h      = img_f.ny;
+            const int n_patches  = (img_f.ny / patch_size) * (img_f.nx / patch_size);
+            const int grid_w     = img_f.nx / patch_size;
+            const int grid_h     = img_f.ny / patch_size;
 
-            pca_project_3d(*output->patch_tokens, n_patches, model.hparams.hidden_size,
-                           grid_w, grid_h, out_w, out_h, params.image_out);
+            pca_project_3d(*output->patch_tokens, n_patches, model.hparams.hidden_size, grid_w, grid_h, out_w, out_h,
+                           params.image_out);
             fprintf(stderr, "%s: Saved image to: %s\n", __func__, params.image_out.c_str());
         }
     }

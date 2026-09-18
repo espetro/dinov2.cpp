@@ -1,0 +1,19 @@
+# based on LLVM style (matches the brace/indent conventions in src/), with a
+# generous column limit to keep churn on existing code minimal
+BasedOnStyle: LLVM
+Language: Cpp
+ColumnLimit: 120
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+PointerAlignment: Right
+DerivePointerAlignment: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+SortIncludes: Never
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveDeclarations: Consecutive
+IncludeBlocks: Preserve
+InsertBraces: true
+FixNamespaceComments: true
