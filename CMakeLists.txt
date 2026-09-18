@@ -69,4 +69,18 @@ if (DINOV2_BUILD_TESTS)
     target_include_directories(test_image PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src tests)
     dinov2_target_flags(test_image)
     add_test(NAME test_image COMMAND test_image)
+
+    # dinov2 library tests: pure-function coverage for do_quantize,
+    # dino_hparams math, interpolate_pos_embed, dino_preprocess fallback.
+    # Links ggml because do_quantize receives a ggml_tensor*. Inherits ggml's
+    # PUBLIC include path for ggml.h; we explicitly add the project root so
+    # `#include "dinov2.h"` resolves and the src/ directory for image.h.
+    add_executable(test_dinov2 tests/test_dinov2.cpp dinov2.cpp src/image.cpp)
+    target_link_libraries(test_dinov2 PUBLIC ggml)
+    target_include_directories(test_dinov2 PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        tests)
+    dinov2_target_flags(test_dinov2)
+    add_test(NAME test_dinov2 COMMAND test_dinov2)
 endif ()
