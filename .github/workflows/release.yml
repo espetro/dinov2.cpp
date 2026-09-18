@@ -54,7 +54,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p stage/bin
-          cp build/bin/inference build/bin/quantize stage/bin/
+          cp build/bin/dinov2-cli stage/bin/
           tar -czf "dinov2-${{ github.ref_name }}-bin-ubuntu-x64.tar.gz" -C stage bin
 
       - uses: actions/upload-artifact@v4
@@ -104,7 +104,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p stage/bin
-          cp build/bin/inference build/bin/quantize stage/bin/
+          cp build/bin/dinov2-cli stage/bin/
           tar -czf "dinov2-${{ github.ref_name }}-bin-ubuntu-arm64.tar.gz" -C stage bin
 
       - uses: actions/upload-artifact@v4
@@ -157,7 +157,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p stage/bin
-          cp build/bin/inference build/bin/quantize stage/bin/
+          cp build/bin/dinov2-cli stage/bin/
           tar -czf "dinov2-${{ github.ref_name }}-bin-macos-arm64.tar.gz" -C stage bin
 
       - uses: actions/upload-artifact@v4
@@ -197,7 +197,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path stage/bin | Out-Null
-          Copy-Item build/bin/Release/inference.exe,build/bin/Release/quantize.exe stage/bin/
+          Copy-Item build/bin/Release/dinov2-cli.exe stage/bin/
           Compress-Archive -Path stage/bin -DestinationPath dinov2-bin-win-cpu-x64.zip
 
       - uses: actions/upload-artifact@v4

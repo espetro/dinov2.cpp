@@ -9,6 +9,8 @@ Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system d
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg)
 
+**Latest release: [v0.3.0](https://github.com/espetro/dinov2.cpp/releases/tag/v0.3.0)**
+
 **Release post & benchmarks → https://alexlavaee.me/projects/dinov2cpp/**
 
 ## Quick start
@@ -45,7 +47,7 @@ huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 **3. Run inference** (add `-c` for classification, omit for PCA feature visualization):
 
 ```bash
-./bin/inference -m models/ggml-model.gguf -i assets/tench.jpg -c
+./bin/dinov2-cli -m models/ggml-model.gguf -i assets/tench.jpg -c
 ```
 
 That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).

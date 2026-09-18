@@ -81,5 +81,5 @@ jobs:
         run: >-
           clang-format-18 --dry-run --Werror
           src/image.cpp src/image.h
-          inference.cpp dinov2.cpp dinov2.h quantize.cpp
+          dinov2-cli.cpp dinov2.cpp dinov2.h
           tests/test_image.cpp

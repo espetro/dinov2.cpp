@@ -9,14 +9,14 @@ All image decoding dependencies (stb) are vendored, so no external image librari
 ```bash
 # macOS / Linux
 cmake --preset release && cmake --build --preset release
-./build-release/bin/inference -m ggml-model.gguf -i assets/tench.jpg -c
+./build-release/bin/dinov2-cli -m ggml-model.gguf -i assets/tench.jpg -c
 ```
 
 ```bash
 # Windows (Ninja)
 cmake --preset release
 cmake --build --preset release
-.\build-release\bin\inference.exe -m ggml-model.gguf -i assets\tench.jpg -c
+.\build-release\bin\dinov2-cli.exe -m ggml-model.gguf -i assets\tench.jpg -c
 ```
 
 Use `-c` for classification output. Omitting the flag returns backbone PCA features (written to `pca_visual.png` by default).
@@ -24,7 +24,7 @@ Use `-c` for classification output. Omitting the flag returns backbone PCA featu
 ## CLI options
 
 ```text
-usage: ./bin/inference [options]
+usage: ./bin/dinov2-cli [options]
 
 options:
   -h, --help              show this help message and exit
@@ -59,18 +59,17 @@ Use AMD's specialized compiler to make full use of your processor's architecture
 Compile with `-fopenmp` (add it to the compiler flags in CMakeLists.txt) to enable multithreaded runs:
 
 ```bash
-OMP_NUM_THREADS=4 ./bin/inference -t 4 -m ggml-model.gguf -i assets/tench.jpg
+OMP_NUM_THREADS=4 ./bin/dinov2-cli -t 4 -m ggml-model.gguf -i assets/tench.jpg
 ```
 
 ## Quantization
 
-ggml quantization types q4_0, q4_1, q5_0, q5_1 and q8_0 are supported. Quantize an f16 GGUF model with the `quantize` binary:
-
-```bash
-./bin/quantize ggml-model.gguf ggml-model-quant.gguf 7   # q5_1
-```
-
-Type codes: 2=q4_0, 3=q4_1, 6=q5_0, 7=q5_1, 8=q8_0. Then use `ggml-model-quant.gguf` like any f16 model. Quantized-model benchmark numbers are in [benchmarks.md](benchmarks.md).
+Quantized GGUFs (q4_0, q4_1, q5_0, q5_1, q8_0) are not produced by this
+repo. They are downloaded from [`dinov2-cpp-core/<variant>-gguf`](https://huggingface.co/dinov2-cpp-core)
+on Hugging Face, which publishes them via the
+`convert-and-publish-gguf` workflow. The pre-built `dinov2-cli` binary
+loads any ggml-supported quant type transparently — pass any of those
+GGUFs as `-m`.
 
 ## Benchmarks
 
@@ -79,25 +78,26 @@ To measure inference speed on your machine, build first, then:
 ```bash
 cmake --preset release && cmake --build --preset release
 
-# Run the inference binary directly with --bench (single-shot, JSON output):
-./build/bin/inference -m models/dinov2-vit-small-patch14/model.gguf \
+# Run the dinov2-cli binary directly with --bench (single-shot, JSON output):
+./build/bin/dinov2-cli -m models/dinov2-vit-small-patch14/model.gguf \
     -i assets/tench.jpg -t 4 -c \
     --bench --bench-runs 5 --bench-json
 
-# Or sweep the (models x quants) matrix via the bench script:
-scripts/bench.sh                                  # 4 models x f16, default 5 repeats
-scripts/bench.sh --models small,base --quants f16,q4_0,q8_0 --repeats 10
+# Or sweep the model size matrix via the bench script:
+scripts/bench.sh                                   # 4 models x f16, default 5 repeats
+scripts/bench.sh --models small,base --repeats 10
 scripts/bench.sh --out ./my-results.md             # write to a custom path
 ```
 
-Flags: `--models <csv>` (default `small,base,large,giant`), `--quants <csv>`
-(default `f16`), `--repeats <N>` (default 5), `--threads <N>` (default 12),
-`--warmup <N>` (default 1), `--out <PATH>` (default `./benchmark_results.md`),
-`--aggregate <inputs> --out <PATH>` (concatenate per-platform tables).
+Flags: `--models <csv>` (default `small,base,large,giant`), `--repeats <N>`
+(default 5), `--threads <N>` (default 12), `--warmup <N>` (default 1),
+`--out <PATH>` (default `./benchmark_results.md`), `--aggregate <inputs> --out <PATH>`
+(concatenate per-platform tables).
 Pre-stage GGUFs under `models/dinov2-vit-{size}-patch14/model.gguf` first;
-the script will exit with a clear error if a model is missing.
-Quantization is automatic when `--quants` contains anything non-`f16`
-(the script calls `bin/quantize` to produce `model.<q>.gguf` on demand).
+the script will exit with a clear error if a model is missing. Only f16
+GGUFs are supported as input — pull pre-quantized variants from
+[`dinov2-cpp-core/<variant>-gguf`](https://huggingface.co/dinov2-cpp-core)
+directly.
 
 Both scripts use 4 threads by default; `threadpoolctl` limits PyTorch's
 thread count for a fair comparison.
