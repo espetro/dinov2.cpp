@@ -113,6 +113,7 @@ jobs:
       - name: Convert to GGUF
         if: env.SKIP != 'true'
         run: uv run python scripts/dinov2-to-gguf.py --model_name ${{ matrix.hf_id }}
+
       - name: Ensure target repo exists
         if: env.SKIP != 'true'
         run: hf repo create dinov2-cpp-core/${{ matrix.variant }}-gguf --repo_type model --exist_ok
@@ -120,8 +121,4 @@ jobs:
       - name: Upload GGUF to Hugging Face
         if: env.SKIP != 'true'
         run: hf upload dinov2-cpp-core/${{ matrix.variant }}-gguf ./ggml-model.gguf model.gguf
-        run: uv run hf repo create dinov2-cpp-core/${{ matrix.variant }}-gguf --repo_type model --exist_ok
-
-      - name: Upload GGUF to Hugging Face
-        if: env.SKIP != 'true'
         run: uv run hf upload dinov2-cpp-core/${{ matrix.variant }}-gguf ./ggml-model.gguf model.gguf
