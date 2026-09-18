@@ -336,3 +336,6 @@ must be added by hand when a new tag ships, since git-cliff does
 not derive a comparison base URL automatically. -->
 
 [Unreleased]: https://github.com/espetro/dinov2.cpp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/espetro/dinov2.cpp/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/espetro/dinov2.cpp/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/espetro/dinov2.cpp/releases/tag/v0.1.0
