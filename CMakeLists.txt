@@ -15,43 +15,58 @@ endif ()
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Set the compiler flags, modify here if needed!
-# If doesn't work, try removing -ffast-math and -fno-finite-math-only
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -ffast-math -fno-finite-math-only")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -fno-finite-math-only")
+option(DINOV2_FATAL_WARNINGS "Enable -Wall -Wextra -Wpedantic -Werror (MSVC: /W4 /WX)" OFF)
+option(DINOV2_BUILD_TESTS "Build doctest unit tests" ON)
 
 # deps
 add_subdirectory(ggml)
 
-# Find OpenCV, you may need to set OpenCV_DIR variable
-# to the absolute path to the directory containing OpenCVConfig.cmake file
-# via the command line or GUI
-
-# OPTIONAL: set(OpenCV_DIR {PATH TO BUILD FOLDER HERE})
-find_package(OpenCV REQUIRED)
-
-if (NOT OpenCV_FOUND)
-    message(FATAL_ERROR "OpenCV not found. Please set OpenCV_DIR to the directory containing OpenCVConfig.cmake.")
+# per-target release optimization flags (kept off global CMAKE_*_FLAGS so that
+# sanitizer/Debug builds of ggml and this project are unaffected)
+if (NOT MSVC)
+    set(DINOV2_RELEASE_FLAGS -O3 -ffast-math -fno-finite-math-only)
+else ()
+    set(DINOV2_RELEASE_FLAGS)
 endif ()
 
+function(dinov2_target_flags target)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE
+            $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:${DINOV2_RELEASE_FLAGS}>)
+        if (DINOV2_FATAL_WARNINGS)
+            target_compile_options(${target} PRIVATE
+                -Wall -Wextra -Wpedantic -Werror
+                # pre-existing code + vendored stb headers are not warning-clean
+                -Wno-missing-field-initializers -Wno-unused-parameter
+                -Wno-unused-function -Wno-deprecated-declarations -Wno-c99-extensions
+                -Wno-unused-but-set-variable -Wno-sign-compare -Wno-unused-variable)
+        endif ()
+    elseif (MSVC)
+        if (DINOV2_FATAL_WARNINGS)
+            target_compile_options(${target} PRIVATE /W4 /WX)
+        endif ()
+    endif ()
+endfunction()
 
 # dinov2 executable
-add_executable(inference inference.cpp dinov2.cpp)
-target_link_libraries(inference PRIVATE ${OpenCV_LIBS} PUBLIC ggml)
-target_include_directories(inference PUBLIC .)
+add_executable(inference inference.cpp dinov2.cpp src/image.cpp)
+target_link_libraries(inference PUBLIC ggml)
+target_include_directories(inference PUBLIC . ${CMAKE_CURRENT_SOURCE_DIR})
+dinov2_target_flags(inference)
 
 option(BUILD_QUANTIZE "Build the quantization executable" ON)
-option(BUILD_REALTIME "Build the realtime executable" ON)
-
-
-if (BUILD_REALTIME)
-    add_executable(realtime realtime.cpp dinov2.cpp)
-    target_link_libraries(realtime PRIVATE ${OpenCV_LIBS} PUBLIC ggml)
-    target_include_directories(realtime PUBLIC .)
+if (BUILD_QUANTIZE)
+    add_executable(quantize quantize.cpp dinov2.cpp src/image.cpp)
+    target_link_libraries(quantize PUBLIC ggml)
+    target_include_directories(quantize PUBLIC .)
+    dinov2_target_flags(quantize)
 endif ()
 
-if (BUILD_QUANTIZE)
-    add_executable(quantize quantize.cpp dinov2.cpp)
-    target_link_libraries(quantize PRIVATE ${OpenCV_LIBS} PUBLIC ggml)
-    target_include_directories(quantize PUBLIC .)
+# tests
+if (DINOV2_BUILD_TESTS)
+    enable_testing()
+    add_executable(test_image tests/test_image.cpp src/image.cpp)
+    target_include_directories(test_image PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src tests)
+    dinov2_target_flags(test_image)
+    add_test(NAME test_image COMMAND test_image)
 endif ()

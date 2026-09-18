@@ -6,7 +6,6 @@
 #include "gguf.h"
 #include "dinov2.h"
 
-
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -19,7 +18,6 @@
 #include <iostream>
 
 #include <inttypes.h>
-
 
 int main(int argc, char **argv) {
     const std::string fname_inp = argv[1];

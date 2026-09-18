@@ -1,0 +1,85 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - master
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ninja and ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          max-size: 500MB
+          evict-old-files: 7d
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+
+      - name: Configure
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_INSTALL_RPATH='$ORIGIN'
+          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+  sanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure (ASan + UBSan)
+        run: >-
+          cmake -B build-sanitize -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+
+      - name: Build
+        run: cmake --build build-sanitize -j"$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build-sanitize --output-on-failure
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format-18
+
+      - name: clang-format check
+        run: >-
+          clang-format-18 --dry-run --Werror
+          src/image.cpp src/image.h
+          inference.cpp dinov2.cpp dinov2.h quantize.cpp
+          tests/test_image.cpp

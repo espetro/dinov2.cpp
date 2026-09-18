@@ -1,14 +1,14 @@
 # dinov2.cpp
 
-DINOv2 pretrained visual models in C/C++ using ggml and OpenCV.
+DINOv2 pretrained visual models in C/C++ using ggml.
 
 ## Description
 
 This project provides an implementation of the DINOv2 family of models in C++. These foundation models have been pretrained
 for image-level and pixel-level visual tasks, and provide a broad range of possible applications in image analysis. We aim 
 to provide all the functionalities available in the [pytorch implementation](https://github.com/facebookresearch/dinov2) in C++.
-This lightweight version of DINOv2 is intended to reduce inference time and required memory, using [ggml](https://github.com/ggerganov/ggml)
-and [OpenCV](https://github.com/opencv/opencv), particularly for use on edge devices. This implementation was heavily inspired by and built on 
+This lightweight version of DINOv2 is intended to reduce inference time and required memory, using [ggml](https://github.com/ggerganov/ggml),
+particularly for use on edge devices. This implementation was heavily inspired by and built on 
 existing code from [vit.cpp](https://github.com/staghado/vit.cpp).
 
 
@@ -22,21 +22,17 @@ existing code from [vit.cpp](https://github.com/staghado/vit.cpp).
       - [Quick example](#quick-example)
         - [Feature Extraction](#feature-extraction)
         - [Classification Output](#classification-output)
-      - [Realtime Demo](#realtime-demo)
     - [Convert PyTorch to GGUF](#convert-pytorch-to-gguf)
+    - [Pre-converted GGUF weights](#pre-converted-gguf-weights)
     - [Build](#build)
-        - [Install OpenCV](#install-opencv)
-          - [Configure Environment Variables](#configure-environment-variables)
         - [Simple build](#simple-build)
             - [inference.cpp (Classification)](#inferencecpp-classification)
             - [inference.cpp (Feature Extraction)](#inferencecpp-feature-extraction)
-            - [realtime.cpp (Live Feature Extraction)](#realtimecpp-live-feature-extraction)
         - [Per device optimizations](#per-device-optimizations)
             - [For AMD host processors](#for-amd-host-processors)
         - [Using OpenMP](#using-openmp)
     - [Run](#run)
       - [inference.cpp](#inferencecpp)
-      - [realtime.cpp](#realtimecpp)
     - [Benchmark against PyTorch](#benchmark-against-pytorch)
         - [DINOv2 inference](#dinov2-inference)
           - [DINOv2 with Register Tokens](#dinov2-with-register-tokens)
@@ -50,7 +46,7 @@ existing code from [vit.cpp](https://github.com/staghado/vit.cpp).
 
 ## Features
 
-- Dependency-free and lightweight inference thanks to [ggml](https://github.com/ggerganov/ggml).
+- Dependency-free inference - vendored stb for image I/O, ggml for compute, no system libraries required.
 - Support for DINO models from huggingface with conversion from pytorch weights to gguf.
 - 4-bit, 5-bit and 8-bit quantization support.
 
@@ -100,12 +96,6 @@ The implemented architecture is based on the DINOv2 architecture:
 main: graph computation took 349 ms
   </pre>
 
-## Realtime Demo
-
-
-https://github.com/user-attachments/assets/54e5181b-5462-48cc-8f2c-159f9dfb5f58
-
-
 ## Convert PyTorch to GGUF
 
 ```bash
@@ -133,40 +123,35 @@ python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-with-registers-s
 
 ```
 
+Note: The weights in the [Pre-converted GGUF weights](#pre-converted-gguf-weights) section are already
+converted, so you only need this script if you want to regenerate them yourself from the PyTorch checkpoints.
+
+## Pre-converted GGUF weights
+
+Pre-converted f16 GGUF weights are available from the Hugging Face repos below.
+
+| Model | Hugging Face repo | Approx f16 GGUF size |
+|:-----:|:------------------|---------------------:|
+| small (no registers) | [facebook/dinov2-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-small-imagenet1k-1-layer) | ~50 MB |
+| base (no registers) | [facebook/dinov2-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-base-imagenet1k-1-layer) | ~180 MB |
+| large (no registers) | [facebook/dinov2-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-large-imagenet1k-1-layer) | ~620 MB |
+| giant (no registers) | [facebook/dinov2-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-giant-imagenet1k-1-layer) | ~2.2 GB |
+| small (registers) | [facebook/dinov2-with-registers-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-small-imagenet1k-1-layer) | ~50 MB |
+| base (registers) | [facebook/dinov2-with-registers-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-base-imagenet1k-1-layer) | ~180 MB |
+| large (registers) | [facebook/dinov2-with-registers-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-large-imagenet1k-1-layer) | ~620 MB |
+| giant (registers) | [facebook/dinov2-with-registers-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-giant-imagenet1k-1-layer) | ~2.2 GB |
+
+Download a model with:
+
+```bash
+huggingface-cli download facebook/dinov2-small-imagenet1k-1-layer --local-dir models/dinov2-small
+```
+
 ## Build
 
-### Install OpenCV
-
-Refer to instructions on the [OpenCV](https://opencv.org/get-started/) website to install OpenCV on your machine.
-
-<p align="center">
-    <img src="assets/readme-assets/OpenCV-table.png">
-  </p>
-
-Using this table, pick your Operating System, and choose if you are going to build from source or install a prebuilt version. It is recommended to build from source, as prebuilt versions only support Visual Studio. OpenCV provides precise step by step instructions on how to build from source.
-
-#### Configure Environment Variables
-
-Once you have built OpenCV, you need to configure your environment to locate it. You have two options:
-
-##### Option 1: Set Path in CMakeLists.txt
-Add the following line to your CMakeLists.txt file:
-```cmake
-set(OpenCV_DIR /path/to/your/opencv/build/folder)
-```
-Replace `/path/to/your/opencv/build/folder` with the absolute path to your OpenCV build directory.
-
-##### Option 2: Set System Environment Variables
-Alternatively, configure your system environment variables:
-
-1. Set `OpenCV_DIR` environment variable to the absolute path of your OpenCV build folder
-2. Add the following directories to your system `PATH` variable:
-   - The absolute path to the OpenCV `bin` folder
-   - The absolute path to the OpenCV `lib` folder
-   
-Note: The `bin` and `lib` folders are typically located in the same directory.
-
 ### Simple Build
+
+All image decoding dependencies (stb) are vendored in this repository, so no external image libraries need to be installed.
 Add the `-c` flag when running inference.cpp to return the output predictions. Omitting the flag (by default) will return the patch
 tokens.
 
@@ -201,21 +186,6 @@ ninja
 ./bin/inference.exe -m ../ggml-model.gguf -i ../assets/tench.jpg
 ```
 
-#### realtime.cpp (Live Feature Extraction)
-```bash
-# on MacOS/Linux 
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release .. && make -j 4
-./bin/realtime -m ../ggml-model.gguf -i ../assets/tench.jpg
-```
-
-```bash
-# on Windows
-mkdir build ; cd build
-cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release ..
-ninja
-./bin/realtime.exe -m ../ggml-model.gguf -i ../assets/tench.jpg
-```
 The optimal number of threads to use depends on many factors and more is not always better. Usually using a number of
 threads equal to the number of available physical cores gives the best performance in terms of speed.
 
@@ -262,18 +232,6 @@ options:
   -t N, --threads         number of threads to use during computation (default: 4)
   -c, --classify          whether to classify the image or get backbone PCA features (default: 0)
   -fa, --flash_attn       whether to enable flash_attn, less accurate (default: 0)
-```
-
-#### realtime.cpp
-```bash
-usage: ./bin/realtime [options]
-
-options:
-  -h, --help              show this help message and exit
-  -m FNAME, --model       model path (default: ../ggml-model.gguf)
-  -t N, --threads         number of threads to use during computation (default: 4)
-  -fa, --flash_attn       whether to enable flash_attn, less accurate (default: 0)
-  -cid, --camera_id       the idea of the camera for realtime backbone PCA feature streaming (default: 0)
 ```
 
 ## Benchmark against PyTorch
