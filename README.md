@@ -50,21 +50,19 @@ huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 
 That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
 
-## Why this fork
-
-Upstream requires building from source and converting weights yourself. This fork ships what's missing: prebuilt binaries for macOS, Linux and Windows, plus ready-to-download GGUF weights published automatically by CI.
-
 ## Features
 
-|---|---|
+| Feature | Detail |
+|:--------|:-------|
 | **Zero dependencies** | Image I/O via vendored stb, compute via ggml. Nothing else. |
 | **CPU, CUDA, Metal** | Backends via ggml wherever ggml supports them. |
 | **f16 GGUF weights** | Plus q4_0 through q8_0 quantization. |
 | **PyTorch-parity outputs** | Matches the reference implementation. |
 | **Cross-platform prebuilts** | macOS arm64, Linux x64/arm64, Windows x64. |
+
 ## Pre-converted GGUF weights
 
-Ready-to-download f16 GGUF weights, published by CI to the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) Hugging Face profile. (The `facebook/*` upstream repos host only PyTorch checkpoints - the original README implied otherwise; conversion happens here so you don't have to.)
+Ready-to-download f16 GGUF weights, published by CI to the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) Hugging Face profile:
 
 | Model | GGUF download | Size |
 |:-----:|:--------------|-----:|
@@ -77,9 +75,6 @@ Ready-to-download f16 GGUF weights, published by CI to the [`dinov2-cpp-core`](h
 | large (registers) | [`dinov2-cpp-core/dinov2-with-registers-large-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-with-registers-large-gguf) | ~620 MB |
 | giant (registers) | [`dinov2-cpp-core/dinov2-with-registers-giant-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-with-registers-giant-gguf) | ~2.2 GB |
 
-Publishing is rolling out now; CI re-converts and re-publishes monthly (or on demand via `gh workflow run convert-and-publish-gguf.yml -f variant=all`). To convert a variant yourself in the meantime, or to build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
-Ready-to-download GGUF weights (published by CI to the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) Hugging Face profile) plus full build-from-source instructions live in [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## Documentation
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): pre-converted GGUF weights, build from source, dev harness, tests, PR guidelines
@@ -87,9 +82,13 @@ Ready-to-download GGUF weights (published by CI to the [`dinov2-cpp-core`](https
 - [docs/benchmarks.md](docs/benchmarks.md): benchmarks against PyTorch, how to run your own
 - [docs/hf-publishing.md](docs/hf-publishing.md): how CI publishes GGUF weights to Hugging Face
 
+## Why this fork
+
+Upstream requires building from source and converting weights yourself. This fork ships what's missing: prebuilt binaries for macOS, Linux and Windows, plus ready-to-download GGUF weights published automatically by CI.
+
 ## Credits
 
-Built on and heavily inspired by [vit.cpp](https://github.com/staghado/vit.cpp) and [ggml](https://github.com/ggml-org/ggml).
+Forked from [lavaman131/dinov2.cpp](https://github.com/lavaman131/dinov2.cpp). Built on and heavily inspired by [vit.cpp](https://github.com/staghado/vit.cpp) and [ggml](https://github.com/ggml-org/ggml).
 
 ## License
 
