@@ -494,7 +494,9 @@ TSWLatexianTemp*
 .idea/
 cmake-build-debug/
 
+# Per-run audit/debug logs from scripts/publish-gguf.sh
+.publish-logs/
+
 .vs/
 .vscode/
-
 build*

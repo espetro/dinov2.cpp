@@ -23,8 +23,28 @@ env:
   HF_HUB_ENABLE_HF_TRANSFER: "1"
 
 jobs:
+  plan:
+    name: Resolve target matrix
+    runs-on: ubuntu-latest
+    outputs:
+      variants: ${{ steps.set.outputs.variants }}
+      should_validate: ${{ steps.set.outputs.should_validate }}
+    steps:
+      - id: set
+        run: |
+          ALL='dinov2-small dinov2-base dinov2-large dinov2-giant dinov2-with-registers-small dinov2-with-registers-base dinov2-with-registers-large dinov2-with-registers-giant'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.variant }}" != "all" ]; then
+            echo "variants=${{ inputs.variant }}" >> "$GITHUB_OUTPUT"
+            echo "should_validate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "variants=$ALL" >> "$GITHUB_OUTPUT"
+            echo "should_validate=true" >> "$GITHUB_OUTPUT"
+          fi
+
   validate:
     name: Validate conversion (dinov2-small)
+    needs: plan
+    if: needs.plan.outputs.should_validate == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -37,7 +57,7 @@ jobs:
 
   publish:
     name: Convert ${{ matrix.variant }}
-    needs: validate
+    needs: [plan, validate]
     if: ${{ !cancelled() && needs.validate.result == 'success' }}
     # Stays on ubuntu-latest (~14 GB free) instead of ubuntu-latest-large.
     # The conversion script installs a lean torch-CPU + transformers venv and
@@ -49,36 +69,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - variant: dinov2-small
-          - variant: dinov2-base
-          - variant: dinov2-large
-          - variant: dinov2-giant
-          - variant: dinov2-with-registers-small
-          - variant: dinov2-with-registers-base
-          - variant: dinov2-with-registers-large
-          - variant: dinov2-with-registers-giant
+        variant: ${{ fromJson(needs.plan.outputs.variants) }}
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      # GitHub-hosted Linux runners use /home/runner as $HOME, so the HF cache
-      # lands at /home/runner/.cache/huggingface. Pin it explicitly so the
-      # cleanup step in scripts/publish-gguf.sh can find and rm-rf the
-      # checkpoint directory without guessing. (runner.home isn't allowed in
-      # env: expressions — only in steps / runs-on contexts.)
-      HF_HOME: /home/runner/.cache/huggingface
+      # HF_HOME / TMPDIR / UV_CACHE_DIR are set by the "Relocate caches" step
+      # below into /mnt (GitHub's ephemeral scratch volume, ~25-40 GB free)
+      # to keep the runner's small root disk free for torch + transformers.
     steps:
-      - name: Skip unselected variants (manual dispatch)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.variant != 'all' && inputs.variant != matrix.variant }}
-        run: echo "SKIP=true" >> "$GITHUB_ENV"
+      - name: Relocate caches to ephemeral /mnt scratch space
+        run: |
+          sudo mkdir -p /mnt/hf /mnt/tmp /mnt/uv-cache
+          sudo chown -R "$(id -u)":"$(id -g)" /mnt/hf /mnt/tmp /mnt/uv-cache
+          echo "HF_HOME=/mnt/hf" >> "$GITHUB_ENV"
+          echo "TMPDIR=/mnt/tmp" >> "$GITHUB_ENV"
+          echo "UV_CACHE_DIR=/mnt/uv-cache" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
-        if: env.SKIP != 'true'
 
       - uses: astral-sh/setup-uv@v5
-        if: env.SKIP != 'true'
 
       - name: Cache .venv-publish (shared across matrix legs)
-        if: env.SKIP != 'true'
         uses: actions/cache@v4
         with:
           path: .venv-publish/
@@ -87,5 +97,4 @@ jobs:
             publish-venv-${{ runner.os }}-
 
       - name: Convert and publish ${{ matrix.variant }}
-        if: env.SKIP != 'true'
         run: bash scripts/publish-gguf.sh "${{ matrix.variant }}"
