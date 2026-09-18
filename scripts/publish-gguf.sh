@@ -79,6 +79,7 @@ if [ ! -d "$VENV_DIR" ]; then
         transformers \
         numpy \
         'huggingface_hub[hf_transfer]' \
+        'hf_xet' \
         'gguf>=0.18.0,<0.20'
 
     # safetensors is pulled by transformers but pin it explicitly so the wheel is
@@ -97,6 +98,8 @@ export PYTHONPATH="${PYTHONPATH:-}:$(pwd)/src"
 # Make HF transfer explicit inside the script as well — protects against the
 # caller forgetting to export it.
 export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
+# Enable hf_xet high-performance mode (Rust dedup + chunked uploader backend).
+export HF_XET_HIGH_PERFORMANCE=1
 
 # Pin HF cache to the standard location explicitly so the cleanup step below is
 # unambiguous regardless of caller overrides.
