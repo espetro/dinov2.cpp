@@ -121,4 +121,3 @@ jobs:
       - name: Upload GGUF to Hugging Face
         if: env.SKIP != 'true'
         run: hf upload dinov2-cpp-core/${{ matrix.variant }}-gguf ./ggml-model.gguf model.gguf
-        run: uv run hf upload dinov2-cpp-core/${{ matrix.variant }}-gguf ./ggml-model.gguf model.gguf
