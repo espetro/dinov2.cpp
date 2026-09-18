@@ -66,6 +66,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         if: env.SKIP != 'true'
 
+      - name: Cache .venv-publish (shared across matrix legs)
+        if: env.SKIP != 'true'
+        uses: actions/cache@v4
+        with:
+          path: .venv-publish/
+          key: publish-venv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            publish-venv-${{ runner.os }}-
+
       - name: Convert and publish ${{ matrix.variant }}
         if: env.SKIP != 'true'
         run: bash scripts/publish-gguf.sh "${{ matrix.variant }}"
