@@ -100,7 +100,7 @@ if [ "${SKIP_UPLOAD:-0}" = "1" ]; then
     echo "==> SKIP_UPLOAD=1, not uploading to $REPO_SLUG"
 else
     echo "==> ensuring HF repo $REPO_SLUG exists"
-    hf repo create "$REPO_SLUG" --repo_type model --exist_ok
+    hf repo create "$REPO_SLUG" --type model --exist-ok
 
     echo "==> uploading $GGUF_PATH -> $REPO_SLUG (path: model.gguf)"
     hf upload "$REPO_SLUG" "$GGUF_PATH" model.gguf
