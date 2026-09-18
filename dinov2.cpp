@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <string>
@@ -313,7 +314,7 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
 
     const int offset = std::max(num_patches - model_num_patches, 0);
 
-    struct ggml_init_params model_params{
+    struct ggml_init_params model_params = ggml_init_params{
         /*.mem_size   =*/ggml_tensor_overhead() * num_tensors + offset,
         /*.mem_buffer =*/nullptr,
         /*.no_alloc   =*/true,
@@ -610,9 +611,9 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
         struct ggml_tensor *cls_token    = ggml_view_1d(ctx_cgraph, cur, hidden_size, 0);
         struct ggml_tensor *patch_tokens = ggml_view_4d(ctx_cgraph, cur, cur->ne[0], cur->ne[1] - 1, cur->ne[2],
                                                         cur->ne[3], cur->nb[1], cur->nb[2], cur->nb[3], cur->nb[1]);
-        cur = ggml_concat(ctx_cgraph,
-                          ggml_concat(ctx_cgraph, cls_token, model.tensors.at("embeddings.register_tokens"), 1),
-                          patch_tokens, 1);
+        struct ggml_tensor *cls_reg =
+            ggml_concat(ctx_cgraph, cls_token, model.tensors.at("embeddings.register_tokens"), 1);
+        cur = ggml_concat(ctx_cgraph, cls_reg, patch_tokens, 1);
     }
 
     struct ggml_tensor *inpL = cur;
