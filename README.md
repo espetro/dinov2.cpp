@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/logo-256.png" width="128" alt="dinov2.cpp"></p>
+
 # dinov2.cpp
 
 Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system dependencies at runtime.
@@ -10,6 +12,16 @@ Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system d
 **Release post & benchmarks → https://alexlavaee.me/projects/dinov2cpp/**
 
 ## Quick start
+
+### Quickstart with agents
+
+Using Claude Code, Cursor or another coding agent? Paste this:
+
+```text
+Install https://github.com/espetro/dinov2.cpp via mise (latest), download the small GGUF from the dinov2-cpp-core profile on Hugging Face, and run classification on an example image to verify it works.
+```
+
+### Manual install
 
 Grab a prebuilt binary, download a weight, run one command. No toolchain needed.
 
@@ -38,13 +50,11 @@ huggingface-cli download espetro/dinov2-small-imagenet1k-1-layer-gguf --local-di
 
 That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
 
+## Features requires building from source and converting weights yourself. This fork ships what's missing: prebuilt binaries for macOS, Linux and Windows, plus ready-to-download GGUF weights published automatically by CI.
+
 ## Why this fork
 
-The upstream project requires building from source and converting weights yourself. This fork ships what's missing: prebuilt binaries for macOS, Linux and Windows, plus ready-to-download GGUF weights published automatically by CI.
-
-## Features
-
-| | |
+The upstream project
 |---|---|
 | **Zero dependencies** | Image I/O via vendored stb, compute via ggml. Nothing else. |
 | **CPU, CUDA, Metal** | Backends via ggml wherever ggml supports them. |
@@ -52,53 +62,16 @@ The upstream project requires building from source and converting weights yourse
 | **PyTorch-parity outputs** | Matches the reference implementation. |
 | **Cross-platform prebuilts** | macOS arm64, Linux x64/arm64, Windows x64. |
 
-## Pre-converted GGUF weights
+## Pre-converted GGUF weights and building from source
 
-f16 GGUF weights are mirrored to Hugging Face under the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) org as `dinov2-cpp-core/<variant>-gguf`. Publishing is rolling out now: CI converts and re-publishes each variant monthly (and on demand) from the official checkpoints:
-
-```bash
-gh workflow run convert-and-publish-gguf.yml -f variant=all          # all 8 variants
-gh workflow run convert-and-publish-gguf.yml -f variant=dinov2-base  # single variant
-```
-
-Until a given variant appears on HF, convert it yourself in one command (see table below for source checkpoints):
-
-```bash
-python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
-```
-
-See [docs/hf-publishing.md](docs/hf-publishing.md) for the `HF_TOKEN` setup.
-
-```bash
-python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
-```
-
-| Model | Source checkpoint | Approx f16 GGUF size |
-|:-----:|:------------------|---------------------:|
-| small (no registers) | [facebook/dinov2-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-small-imagenet1k-1-layer) | ~50 MB |
-| base (no registers) | [facebook/dinov2-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-base-imagenet1k-1-layer) | ~180 MB |
-| large (no registers) | [facebook/dinov2-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-large-imagenet1k-1-layer) | ~620 MB |
-| giant (no registers) | [facebook/dinov2-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-giant-imagenet1k-1-layer) | ~2.2 GB |
-| small (registers) | [facebook/dinov2-with-registers-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-small-imagenet1k-1-layer) | ~50 MB |
-| base (registers) | [facebook/dinov2-with-registers-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-base-imagenet1k-1-layer) | ~180 MB |
-| large (registers) | [facebook/dinov2-with-registers-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-large-imagenet1k-1-layer) | ~620 MB |
-| giant (registers) | [facebook/dinov2-with-registers-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-giant-imagenet1k-1-layer) | ~2.2 GB |
-
-## Build from source
-
-```bash
-git clone --recurse-submodules https://github.com/espetro/dinov2.cpp.git
-cd dinov2.cpp
-cmake --preset release && cmake --build --preset release
-```
-
-Per-device optimizations (AMD hosts, OpenMP), sanitizer presets and benchmark instructions: [docs/build.md](docs/build.md).
+Ready-to-download GGUF weights (published by CI to the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) Hugging Face profile) plus full build-from-source instructions live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-- [docs/build.md](docs/build.md): build from source, per-device optimizations, quantization
+- [CONTRIBUTING.md](CONTRIBUTING.md): pre-converted GGUF weights, build from source, dev harness, tests, PR guidelines
+- [docs/build.md](docs/build.md): per-device optimizations, quantization
 - [docs/benchmarks.md](docs/benchmarks.md): benchmarks against PyTorch, how to run your own
-- [CONTRIBUTING.md](CONTRIBUTING.md): dev harness, tests, PR guidelines
+- [docs/hf-publishing.md](docs/hf-publishing.md): how CI publishes GGUF weights to Hugging Face
 
 ## Credits
 
