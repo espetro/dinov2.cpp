@@ -8,6 +8,7 @@
 #include "src/image.h"
 #include <regex>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
