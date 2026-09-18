@@ -1,136 +1,66 @@
 # dinov2.cpp
 
-DINOv2 pretrained visual models in C/C++ using ggml.
+Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system dependencies at runtime.
 
-## Description
+[![Release](https://img.shields.io/github/v/release/espetro/dinov2.cpp)](https://github.com/espetro/dinov2.cpp/releases)
+[![CI](https://github.com/espetro/dinov2.cpp/actions/workflows/build.yml/badge.svg)](https://github.com/espetro/dinov2.cpp/actions/workflows/build.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg)
 
-This project provides an implementation of the DINOv2 family of models in C++. These foundation models have been pretrained
-for image-level and pixel-level visual tasks, and provide a broad range of possible applications in image analysis. We aim 
-to provide all the functionalities available in the [pytorch implementation](https://github.com/facebookresearch/dinov2) in C++.
-This lightweight version of DINOv2 is intended to reduce inference time and required memory, using [ggml](https://github.com/ggerganov/ggml),
-particularly for use on edge devices. This implementation was heavily inspired by and built on 
-existing code from [vit.cpp](https://github.com/staghado/vit.cpp).
+**Release post & benchmarks → https://alexlavaee.me/projects/dinov2cpp/**
 
+## Quick start
 
-<details>
-<summary>Table of Contents</summary>
+Grab a prebuilt binary, download a weight, run one command. No toolchain needed.
 
-- [dinov2.cpp](#dinov2cpp)
-    - [Description](#description)
-    - [Features](#features)
-    - [DINOv2 Overview](#dinov2-overview)
-      - [Quick example](#quick-example)
-        - [Feature Extraction](#feature-extraction)
-        - [Classification Output](#classification-output)
-    - [Convert PyTorch to GGUF](#convert-pytorch-to-gguf)
-    - [Pre-converted GGUF weights](#pre-converted-gguf-weights)
-    - [Build](#build)
-        - [Simple build](#simple-build)
-            - [inference.cpp (Classification)](#inferencecpp-classification)
-            - [inference.cpp (Feature Extraction)](#inferencecpp-feature-extraction)
-        - [Per device optimizations](#per-device-optimizations)
-            - [For AMD host processors](#for-amd-host-processors)
-        - [Using OpenMP](#using-openmp)
-    - [Run](#run)
-      - [inference.cpp](#inferencecpp)
-    - [Benchmark against PyTorch](#benchmark-against-pytorch)
-        - [DINOv2 inference](#dinov2-inference)
-          - [DINOv2 with Register Tokens](#dinov2-with-register-tokens)
-          - [DINOv2 without Register Tokens](#dinov2-without-register-tokens)
-        - [Benchmark on your machine](#benchmark-on-your-machine)
-    - [Quantization](#quantization)
-        - [Results](#results)
-    - [To-Do List](#to-do-list)
+**1. Install a prebuilt binary** from [releases](https://github.com/espetro/dinov2.cpp/releases):
 
-</details>
+```bash
+# macOS (Apple Silicon)
+curl -LO https://github.com/espetro/dinov2.cpp/releases/download/v0.1.0/dinov2-v0.1.0-bin-macos-arm64.tar.gz
+tar xzf dinov2-v0.1.0-bin-macos-arm64.tar.gz
+
+# Linux x64 / arm64: dinov2-v0.1.0-bin-ubuntu-x64.tar.gz / dinov2-v0.1.0-bin-ubuntu-arm64.tar.gz
+# Windows: dinov2-bin-win-cpu-x64.zip
+```
+
+**2. Download a GGUF weight:**
+
+```bash
+huggingface-cli download espetro/dinov2-small-imagenet1k-1-layer-gguf --local-dir models
+```
+
+**3. Run inference** (add `-c` for classification, omit for PCA feature visualization):
+
+```bash
+./bin/inference -m models/ggml-model.gguf -i assets/tench.jpg -c
+```
+
+That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
+
+## Why this fork
+
+The upstream project requires building from source and converting weights yourself. This fork ships what's missing: prebuilt binaries for macOS, Linux and Windows, plus ready-to-download GGUF weights published automatically by CI.
 
 ## Features
 
-- Dependency-free inference - vendored stb for image I/O, ggml for compute, no system libraries required.
-- Support for DINO models from huggingface with conversion from pytorch weights to gguf.
-- 4-bit, 5-bit and 8-bit quantization support.
-
-
-## DINOv2 Overview
-
-The implemented architecture is based on the DINOv2 architecture:
-
-- [DINOv2: Learning Robust Visual Features without Supervision](https://arxiv.org/abs/2304.07193)
-
-## Quick example
-
-#### Feature Extraction
-
-  <p align="center">
-    <img src="assets/tench.jpg" alt="example input" width="50%" height="auto">
-  </p>
-
-  <p align="center">
-    <img src="assets/pca_visual.jpg" alt="PCA output" width="50%" height="auto">
-  </p>
-
-#### Classification Output
-  <pre>
-  $ ./bin/dinov2 -t 4 -m ../ggml-model.gguf -i ../assets/tench.jpg 
-  main: seed = 42
-  main: loaded image '../assets/tench.jpg' (408 x 612)
-  dino_model_load: loading model from '../ggml-model.gguf' - please wait
-  dino_model_load: hidden_size            = 384
-  dino_model_load: num_hidden_layers      = 12
-  dino_model_load: num_register_tokens    = 4
-  dino_model_load: num_attention_heads    = 6
-  dino_model_load: patch_size             = 14
-  dino_model_load: img_size               = 518
-  dino_model_load: ftype                  = 1
-  dino_model_load: qntvr                  = 0
-  dino_model_load: num_classes            = 1000
-  main: preprocessed image (224 x 224)
-
-
-&gt; tench, Tinca tinca : 0.90
-&gt; coho, cohoe, coho salmon, blue jack, silver salmon, Oncorhynchus kisutch : 0.05
-&gt; goldfish, Carassius auratus : 0.01
-&gt; suit, suit of clothes : 0.01
-&gt; barracouta, snoek : 0.00
-
-main: graph computation took 349 ms
-  </pre>
-
-## Convert PyTorch to GGUF
-
-```bash
-# clone the repo recursively
-git clone --recurse-submodules git@github.com:lavaman131/dinov2.cpp.git
-
-cd dinov2.cpp
-
-uv venv
-
-# for MacOS/Linux
-source .venv/bin/activate
-# for Windows
-.venv\Scripts\activate
-
-uv sync --frozen
-
-# convert the weights to gguf : dinov2 small with patch size of 14 and an image 
-# size of 518  
-# DINOv2 weights are always fp16
-# without registers
-python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
-# with registers
-python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-with-registers-small-imagenet1k-1-layer
-
-```
-
-Note: The weights in the [Pre-converted GGUF weights](#pre-converted-gguf-weights) section are already
-converted, so you only need this script if you want to regenerate them yourself from the PyTorch checkpoints.
+| | |
+|---|---|
+| **Zero dependencies** | Image I/O via vendored stb, compute via ggml. Nothing else. |
+| **CPU, CUDA, Metal** | Backends via ggml wherever ggml supports them. |
+| **f16 GGUF weights** | Plus q4_0 through q8_0 quantization. |
+| **PyTorch-parity outputs** | Matches the reference implementation. |
+| **Cross-platform prebuilts** | macOS arm64, Linux x64/arm64, Windows x64. |
 
 ## Pre-converted GGUF weights
 
-Pre-converted f16 GGUF weights are available from the Hugging Face repos below.
+f16 GGUF weights are mirrored to Hugging Face under the `dinov2-cpp/*-gguf` org. Publishing is rolling out now: CI converts and publishes each variant monthly from the official checkpoints. Until a given variant appears, convert it yourself in one command:
 
-| Model | Hugging Face repo | Approx f16 GGUF size |
+```bash
+python ./scripts/dinov2-to-gguf.py --model_name facebook/dinov2-small-imagenet1k-1-layer
+```
+
+| Model | Source checkpoint | Approx f16 GGUF size |
 |:-----:|:------------------|---------------------:|
 | small (no registers) | [facebook/dinov2-small-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-small-imagenet1k-1-layer) | ~50 MB |
 | base (no registers) | [facebook/dinov2-base-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-base-imagenet1k-1-layer) | ~180 MB |
@@ -141,232 +71,26 @@ Pre-converted f16 GGUF weights are available from the Hugging Face repos below.
 | large (registers) | [facebook/dinov2-with-registers-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-large-imagenet1k-1-layer) | ~620 MB |
 | giant (registers) | [facebook/dinov2-with-registers-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-giant-imagenet1k-1-layer) | ~2.2 GB |
 
-Download a model with:
+## Build from source
 
 ```bash
-huggingface-cli download facebook/dinov2-small-imagenet1k-1-layer --local-dir models/dinov2-small
+git clone --recurse-submodules https://github.com/espetro/dinov2.cpp.git
+cd dinov2.cpp
+cmake --preset release && cmake --build --preset release
 ```
 
-## Build
+Per-device optimizations (AMD hosts, OpenMP), sanitizer presets and benchmark instructions: [docs/build.md](docs/build.md).
 
-### Simple Build
+## Documentation
 
-All image decoding dependencies (stb) are vendored in this repository, so no external image libraries need to be installed.
-Add the `-c` flag when running inference.cpp to return the output predictions. Omitting the flag (by default) will return the patch
-tokens.
+- [docs/build.md](docs/build.md): build from source, per-device optimizations, quantization
+- [docs/benchmarks.md](docs/benchmarks.md): benchmarks against PyTorch, how to run your own
+- [CONTRIBUTING.md](CONTRIBUTING.md): dev harness, tests, PR guidelines
 
-#### inference.cpp (Classification)
-```bash
-# on MacOS/Linux 
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release .. && make -j 4
-./bin/inference -m ../ggml-model.gguf -i ../assets/tench.jpg -c
-```
+## Credits
 
-```bash
-# on Windows
-mkdir build ; cd build
-cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release ..
-ninja
-./bin/inference.exe -m ../ggml-model.gguf -i ../assets/tench.jpg -c
-```
-#### inference.cpp (Feature Extraction)
-```bash
-# on MacOS/Linux 
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release .. && make -j 4
-./bin/inference -m ../ggml-model.gguf -i ../assets/tench.jpg
-```
+Built on and heavily inspired by [vit.cpp](https://github.com/staghado/vit.cpp) and [ggml](https://github.com/ggml-org/ggml).
 
-```bash
-# on Windows
-mkdir build ; cd build
-cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release ..
-ninja
-./bin/inference.exe -m ../ggml-model.gguf -i ../assets/tench.jpg
-```
+## License
 
-The optimal number of threads to use depends on many factors and more is not always better. Usually using a number of
-threads equal to the number of available physical cores gives the best performance in terms of speed.
-
-### Per device optimizations
-
-Generate per-device instructions that work best for the given machine rather than using general CPU instructions.
-
-This can be done by specifying `-march=native` in the compiler flags.
-
-* Multi-threading and vectorization
-* Loop transformations(unrolling)
-
-#### For AMD host processors
-
-You can use a specialized compiler released by AMD to make full use of your specific processor's architecture.
-
-Read more here : [AMD Optimizing C/C++ and Fortran Compilers (AOCC)](https://www.amd.com/en/developer/aocc.html)
-
-You can follow the given instructions to install the AOCC compiler.
-
-Please note that modern processors tend to see the greatest benefits from a specialized compiler, whereas older CPUs may experience little to no performance improvement.
-
-### Using OpenMP
-
-Additionally compile with OpenMP by specifying the `-fopenmp` flag to the compiler in the CMakeLists file,
-allowing multithreaded runs. Make sure to also enable multiple threads when running, e.g.:
-
-```bash
-OMP_NUM_THREADS=4 ./bin/inference -t 4 -m ../ggml-model.bin -i ../assets/tench.jpg
-```
-
-## Run
-
-#### inference.cpp
-```bash
-usage: ./bin/inference [options]
-
-options:
-  -h, --help              show this help message and exit
-  -m FNAME, --model       model path (default: ../ggml-model.gguf)
-  -i FNAME, --inp         input file (default: ../assets/tench.jpg)
-  -o FNAME, --out         output file for backbone PCA features (default: pca_visual.png)
-  -k N, --topk            top k classes to print (default: 5)
-  -t N, --threads         number of threads to use during computation (default: 4)
-  -c, --classify          whether to classify the image or get backbone PCA features (default: 0)
-  -fa, --flash_attn       whether to enable flash_attn, less accurate (default: 0)
-```
-
-## Benchmark against PyTorch
-
-First experiments on Intel Core i9-14900HX show inference speedups (up to 3x faster for small model, ~1.5-2x faster for the rest) compared to native PyTorch inference.
-
-### DINOv2 inference
-
-You can efficiently run DINOv2 inference on the CPU.
-
-Memory requirements and inference speed on Intel Core i9-14900HX (24 cores, 32 threads) for both native PyTorch and `dinov2.cpp`.
-Using a thread count greater than 10 provides marginal improvements, but 24 threads were used for these runs. The reported results of inference speed correspond to 100 runs
-averages for both PyTorch and `dinov2.cpp`.
-
-#### DINOv2 with Register Tokens
-| Model | Max Mem(PyTorch) |   Max Mem   | Speed(PyTorch) |    Speed    |
-|:-----:|:----------------:|:-----------:|:--------------:|:-----------:|
-| small  |     ~457 MB      | **~109 MB**  |     297 ms     | **64 ms**  |
-| base |     ~720 MB      | **~367 MB**  |     436 ms     | **200 ms**  |
-| large  |     ~1.57 GB     | **~1.2 GB** |    1331 ms     | **597 ms** |
-| giant |     ~4.8 GB     | **~4.4 GB** |    4472 ms     | **1995 ms** |
-
-> **Note:** The models used are of the form `dinov2-with-registers-{size}-imagenet1k-1-layer`
-
-#### DINOv2 without Register Tokens
-| Model | Max Mem(PyTorch) |   Max Mem   | Speed(PyTorch) |    Speed    |
-|:-----:|:----------------:|:-----------:|:--------------:|:-----------:|
-| small  |     ~455 MB      | **~110 MB**  |     181 ms     | **62 ms**  |
-| base |     ~720 MB      | **~367 MB**  |     462 ms     | **197 ms**  |
-| large  |     ~1.55 GB     | **~1.2 GB** |    1288 ms     | **600 ms** |
-| giant |     ~4.8 GB     | **~4.4 GB** |    4384 ms     | **1969 ms** |
-
-> **Note:** The models used are of the form `dinov2-{size}-imagenet1k-1-layer`.
-
-### Benchmark on your machine
-
-In order to test the inference speed on your machine, you can run the following scripts:
-
-```bash
-chmod +x scripts/benchmark.*
-
-# install memory_profiler & threadpoolctl
-pip install memory_profiler threadpoolctl
-
-# run the benchmark of PyTorch
-python scripts/benchmark.py
-
-# run the benchmark of dinov2.cpp for non-quantized model
-./scripts/benchmark.sh
-
-# to run the benchamrk for quantized models; 4 threads and quantize flag
-./scripts/benchmark.sh 4 1
-```
-
-Both scripts use 4 threads by default. In Python, the `threadpoolctl` library is used to limit the number of threads
-used by PyTorch.
-
-## Quantization
-
-`dinov2.cpp` supports quantization strategies from ggml such as q4_0, q4_1, q5_0, q5_1 and q8_0 types.
-You can quantize a model in F32 (the patch embedding is in F16) to one of these types by using the `./bin/quantize`
-binary.
-
-```
-usage: ./bin/quantize /path/to/ggml-model.gguf /path/to/ggml-model-quantized.gguf type                              
-  type = 2 - q4_0                                                                                                       
-  type = 3 - q4_1                                                                                                       
-  type = 6 - q5_0                                                                                                       
-  type = 7 - q5_1                                                                                                       
-  type = 8 - q8_0                                                                                                       
-```
-
-For example, you can run the following to convert the model to q5_1:
-
-```shell
-./bin/quantize ../ggml-model.gguf ../ggml-model-quant.gguf 7
-```
-
-Then you can use `ggml-model-quant.gguf` just like the model in F16.
-
-### Results
-
-Here are the benchmarks for the different models and quantizations on my machine:
-For accurate estimation of run times, these benchmarks were run 100 times each.
-
-#### DINOv2 with Register Tokens
-| Model | Quantization | Speed (ms) | Mem (MB) |
-|:-----:|:------:|:----------:|:--------:|
-| small | q4_0 | 52 | 49 |
-| small | q4_1 | 50 | 52 |
-| small | q5_0 | 59 | 54 |
-| small | q5_1 | 57 | 57 |
-| small | q8_0 | 51 | 70 |
-| base | q4_0 | 136 | 129 |
-| base | q4_1 | 133 | 139 |
-| base | q5_0 | 164 | 150 |
-| base | q5_1 | 158 | 160 |
-| base | q8_0 | 124 | 211 |
-| large | q4_0 | 395 | 371 |
-| large | q4_1 | 395 | 407 |
-| large | q5_0 | 493 | 443 |
-| large | q5_1 | 490 | 480 |
-| large | q8_0 | 353 | 661 |
-| giant | q4_0 | 1275 | 1281 |
-| giant | q4_1 | 1261 | 1417 |
-| giant | q5_0 | 1615 | 1552 |
-| giant | q5_1 | 1583 | 1687 |
-| giant | q8_0 | 1065 | 2364 |
-
-#### DINOv2 without Register Tokens
-
-| Model | Quantization | Speed (ms) | Mem (MB) |
-|:-----:|:------:|:----------:|:--------:|
-| small | q4_0 | 46 | 49 |
-| small | q4_1 | 48 | 51 |
-| small | q5_0 | 63 | 54 |
-| small | q5_1 | 58 | 57 |
-| small | q8_0 | 50 | 70 |
-| base | q4_0 | 141 | 129 |
-| base | q4_1 | 135 | 140 |
-| base | q5_0 | 162 | 150 |
-| base | q5_1 | 161 | 160 |
-| base | q8_0 | 125 | 212 |
-| large | q4_0 | 389 | 371 |
-| large | q4_1 | 382 | 407 |
-| large | q5_0 | 497 | 444 |
-| large | q5_1 | 478 | 480 |
-| large | q8_0 | 348 | 661 |
-| giant | q4_0 | 1268 | 1281 |
-| giant | q4_1 | 1248 | 1417 |
-| giant | q5_0 | 1625 | 1553 |
-| giant | q5_1 | 1576 | 1688 |
-| giant | q8_0 | 1059 | 2364 |
-
-This project was built on and highly inspired by vit.cpp:
-
-* [vit.cpp](https://github.com/staghado/vit.cpp)
-
+[MIT](LICENSE)
