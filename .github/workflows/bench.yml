@@ -1,0 +1,153 @@
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Which f16 GGUF to bench (single variant or 'all')"
+        required: false
+        default: "small"
+        type: choice
+        options:
+          - small
+          - base
+          - large
+          - giant
+          - all
+      repeats:
+        description: "Timed runs per cell (forwarded to scripts/bench.sh --repeats)"
+        required: false
+        default: "5"
+        type: string
+      threads:
+        description: "OpenMP threads (forwarded to scripts/bench.sh --threads)"
+        required: false
+        default: "12"
+        type: string
+
+# Bench is on-demand: each workflow_dispatch run is independent and
+# parallel-safe (different `runs` get different run IDs and thus
+# different artifact namespaces). No concurrency-group singleflight.
+concurrency:
+  group: bench-${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache python3 python3-pip
+
+      - name: Install huggingface_hub CLI
+        run: |
+          python3 -m pip install --break-system-packages --quiet \
+            "huggingface_hub[cli]"
+
+      - name: Cache ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          max-size: 500MB
+          save: false
+
+      - name: Configure
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DDINOV2_BUILD_TESTS=OFF
+
+      - name: Build dinov2-cli
+        run: cmake --build build --target dinov2-cli -j"$(nproc)"
+
+      - name: Resolve HF variants
+        id: variants
+        env:
+          INPUT_VARIANT: ${{ inputs.variant }}
+        run: |
+          case "$INPUT_VARIANT" in
+            all)
+              echo "BENCH_MODELS=small,base,large,giant" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "BENCH_MODELS=$INPUT_VARIANT" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Download f16 GGUF(s)
+        env:
+          HF_HUB_ENABLE_HF_TRANSFER: "1"
+          BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
+        run: |
+          set -euo pipefail
+          # scripts/bench.sh hard-codes paths of the form
+          # `models/dinov2-vit-<variant>-patch14/model.gguf`. The HF
+          # repos ship `dinov2-{small,base,large,giant}-gguf` and the
+          # uploaded file is named `model.gguf` (no quant suffix); f16
+          # is the only quant this repo benches natively per the v0.3.0
+          # commit that dropped the --quants loop.
+          variant_list="${BENCH_MODELS//,/ }"
+          for variant in $variant_list; do
+            repo="dinov2-cpp-core/dinov2-${variant}-gguf"
+            target_dir="models/dinov2-vit-${variant}-patch14"
+            mkdir -p "$target_dir"
+            echo "Downloading $repo -> $target_dir/model.gguf"
+            huggingface-cli download \
+              --repo-type model \
+              --local-dir "$target_dir" \
+              "$repo" "model.gguf"
+          done
+
+      - name: Verify staged weights
+        env:
+          BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
+        run: |
+          set -euo pipefail
+          variant_list="${BENCH_MODELS//,/ }"
+          for variant in $variant_list; do
+            target="models/dinov2-vit-${variant}-patch14/model.gguf"
+            if [ ! -f "$target" ]; then
+              echo "::error::Missing $target after download" >&2
+              exit 3
+            fi
+            printf "%-50s %10d bytes\n" "$target" "$(stat -c %s "$target")"
+          done
+
+      - name: Run benchmarks
+        env:
+          BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
+          BENCH_REPEATS: ${{ inputs.repeats }}
+          BENCH_THREADS: ${{ inputs.threads }}
+        run: |
+          set -euo pipefail
+          echo "models selected: $BENCH_MODELS"
+          echo "repeats: $BENCH_REPEATS"
+          echo "threads: $BENCH_THREADS"
+          chmod +x scripts/bench.sh
+          bash scripts/bench.sh \
+            --models "$BENCH_MODELS" \
+            --repeats "$BENCH_REPEATS" \
+            --threads "$BENCH_THREADS" \
+            --image assets/tench.jpg \
+            --bin build/bin/dinov2-cli \
+            --out benchmark_results.txt
+          echo "--- benchmark_results.txt ---"
+          cat benchmark_results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ inputs.variant }}-${{ github.run_id }}
+          path: benchmark_results.txt
+          if-no-files-found: error
+          retention-days: 90
