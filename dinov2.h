@@ -91,8 +91,6 @@ struct dino_output {
 
 void print_t_f32(const char *title, const struct ggml_tensor *t, int n);
 
-static void ggml_disconnect_node_from_graph(ggml_tensor *t);
-
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 
 ImageF dino_preprocess(const Image &img, const dino_hparams &params);

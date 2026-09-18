@@ -8,6 +8,7 @@
 #include "src/image.h"
 #include <regex>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -18,8 +19,6 @@
 #include <cinttypes>
 #include <algorithm>
 #include <iostream>
-
-#include "ggml/src/ggml-impl.h"
 
 #ifdef GGML_USE_CUDA
 #include "ggml-cuda.h"
@@ -89,13 +88,6 @@ void print_t_f32(const char *title, const struct ggml_tensor *t, const int n = 1
         sum += data[i];
     }
     printf("sum:  %f\n\n", sum);
-}
-
-static void ggml_disconnect_node_from_graph(ggml_tensor *t) {
-    t->op = GGML_OP_NONE;
-    for (auto &i : t->src) {
-        i = nullptr;
-    }
 }
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params) {
@@ -789,7 +781,7 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
         } else if (arg == "-i" || arg == "--inp") {
             params.fname_inp = argv[++i];
         } else if (arg == "-o" || arg == "--out") {
-            params.fname_inp = argv[++i];
+            params.image_out = argv[++i];
         } else if (arg == "-t" || arg == "--threads") {
             params.n_threads = std::stoi(argv[++i]);
         } else if (arg == "-k" || arg == "--topk") {
