@@ -11,29 +11,20 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "torch",
-    "timm",
-    "torchvision",
-    "Pillow",
-    "transformers[torch]",
-    "hf_transfer",
-    "memory-profiler",
-    "threadpoolctl",
+    "transformers",
     "gguf>=0.18.0,<0.20",
+    "huggingface_hub[hf_transfer]",
+    "hf_xet",
+    "numpy",
 ]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["dinov2_inference"]
-namespaces = true
 
 [build-system]
 requires = ["setuptools"]
