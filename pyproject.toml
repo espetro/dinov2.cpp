@@ -18,7 +18,7 @@ dependencies = [
     "hf_transfer",
     "memory-profiler",
     "threadpoolctl",
-    "gguf",
+    "gguf>=0.18.0,<0.20",
 ]
 
 [tool.uv.sources]
