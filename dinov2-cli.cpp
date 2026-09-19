@@ -111,19 +111,19 @@ int main(int argc, char **argv) {
                 ggml_backend_synchronize(model.backend);
                 int64_t dt_ms = ggml_time_ms() - t0;
                 if (i >= params.bench_warmup) {
-                    samples.push_back((double) dt_ms);
+                    samples.push_back((double)dt_ms);
                 }
 #ifdef _WIN32
                 PROCESS_MEMORY_COUNTERS pmc;
                 if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-                    size_t kb = (size_t) pmc.PeakWorkingSetSize / 1024;
+                    size_t kb = (size_t)pmc.PeakWorkingSetSize / 1024;
                     if (kb > peak_rss_kb) {
                         peak_rss_kb = kb;
                     }
                 }
 #else
                 if (getrusage(RUSAGE_SELF, &ru) == 0) {
-                    size_t kb = (size_t) ru.ru_maxrss;
+                    size_t kb = (size_t)ru.ru_maxrss;
 #if defined(__APPLE__)
                     // macOS: ru_maxrss is bytes; convert to KB.
                     kb = kb / 1024;
@@ -150,21 +150,21 @@ int main(int argc, char **argv) {
                     mx = s;
                 }
             }
-            double mean    = samples.empty() ? 0.0 : sum / (double) samples.size();
+            double mean     = samples.empty() ? 0.0 : sum / (double)samples.size();
             double variance = 0.0;
             for (double s : samples) {
                 double d = s - mean;
                 variance += d * d;
             }
-            double stddev = samples.size() > 1 ? std::sqrt(variance / (double) (samples.size() - 1)) : 0.0;
-            double peak_rss_mb = (double) peak_rss_kb / 1024.0;
+            double stddev      = samples.size() > 1 ? std::sqrt(variance / (double)(samples.size() - 1)) : 0.0;
+            double peak_rss_mb = (double)peak_rss_kb / 1024.0;
 
             // Extract a short model label from the GGUF path: e.g. "models/dinov2-vit-base-patch14/model.f16.gguf"
             // -> "dinov2-vit-base-patch14". Falls back to the full path if nothing matches.
             std::string model_label = params.model;
             {
                 std::string needle = "dinov2-vit-";
-                std::size_t pos     = model_label.find(needle);
+                std::size_t pos    = model_label.find(needle);
                 if (pos != std::string::npos) {
                     std::size_t end = model_label.find('/', pos);
                     if (end == std::string::npos) {
@@ -184,8 +184,9 @@ int main(int argc, char **argv) {
                     }
                     fprintf(stdout, "%.0f", samples[i]);
                 }
-                fprintf(stdout, "],\"mean_ms\":%.1f,\"stddev_ms\":%.1f,\"min_ms\":%.0f,\"max_ms\":%.0f,"
-                                "\"peak_rss_mb\":%.0f}\n",
+                fprintf(stdout,
+                        "],\"mean_ms\":%.1f,\"stddev_ms\":%.1f,\"min_ms\":%.0f,\"max_ms\":%.0f,"
+                        "\"peak_rss_mb\":%.0f}\n",
                         mean, stddev, mn, mx, peak_rss_mb);
                 fflush(stdout);
             } else {

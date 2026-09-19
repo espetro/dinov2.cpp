@@ -66,9 +66,9 @@ struct dino_params {
     float       eps               = 1e-6f;                    // epsilon used in LN
     // Benchmark controls. bench_repeats=0 disables the bench loop (legacy single-shot path).
     // --bench with no count sets bench_repeats to 5 (the default for one-shot "is it faster").
-    uint32_t    bench_repeats     = 0;
-    uint32_t    bench_warmup      = 1;
-    bool        bench_json        = false;
+    uint32_t bench_repeats = 0;
+    uint32_t bench_warmup  = 1;
+    bool     bench_json    = false;
 };
 
 struct ggml_tensor *attn(struct ggml_tensor *cur, int il, struct ggml_context *ctx_cgraph, const dino_model &model,

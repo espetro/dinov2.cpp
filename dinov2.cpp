@@ -680,7 +680,8 @@ void print_usage(int argc, char **argv, const dino_params &params) {
             params.enable_flash_attn);
     fprintf(stderr, "\n");
     fprintf(stderr, "Benchmark:\n");
-    fprintf(stderr, "  --bench                 enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
+    fprintf(stderr,
+            "  --bench                 enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
     fprintf(stderr, "  --bench-runs N          number of timed runs (overrides default 5 when --bench is set)\n");
     fprintf(stderr, "  --bench-warmup N        number of warmup runs discarded before timing (default: %u)\n",
             params.bench_warmup);
