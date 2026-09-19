@@ -1,0 +1,29 @@
+# Project-scoped mise config for dinov2.cpp.
+#
+# Only pins tools that are *project-specific*: they exist solely to support
+# this repo's CI/dev loop. General dev tools (cmake, ninja, python, rust,
+# node, pnpm, etc.) live in the global ~/.config/mise/config.toml and are
+# intentionally NOT listed here.
+#
+# Do NOT add the names of tools used by other repos here; doing so would
+# either (a) pollute the global install state by forcing a version pin for
+# everyone, or (b) require every developer to install irrelvant tools just
+# to run mise in this directory.
+
+[env]
+# Nothing project-specific. mise vars / env overrides belong in this section
+# if needed; keep it empty rather than copying global env defaults.
+
+[tools]
+# CI runs `clang-format-18 --dry-run --Werror ...` in .github/workflows/build.yml
+# (Ubuntu installs via apt: clang-format-18). Pin to 18.1.8 so local lint matches
+# CI byte-for-byte. Backend chosen because conda ships LLVM's official clang-format
+# pre-built binaries (same binary the apt package on Ubuntu provides).
+"conda:clang-format" = "18.1.8"
+
+# CI installs git-cliff@2 (major-pinned) in .github/workflows/changelog.yml via
+# taiki-e/install-action. Pin to 2.14.1 (the latest v2 release) so changelog
+# regeneration matches CI exactly. aqua backend pulls the official GitHub release
+# binary (https://github.com/orhun/git-cliff/releases) — same artifact CI uses,
+# no Rust build step required.
+"aqua:orhun/git-cliff" = "2.14.1"
