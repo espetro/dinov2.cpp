@@ -165,7 +165,7 @@ for v in "${MODEL_ARR[@]}"; do
     bench_stats="$(python3 -c '
 import json, sys
 data = json.loads(open("'"$bench_json"'").read().strip())
-print(f"{data[\"mean_ms\"]:.1f} {data[\"stddev_ms\"]:.1f} {data[\"min_ms\"]:.0f} {data[\"max_ms\"]:.0f} {data[\"peak_rss_mb\"]:.0f}")
+print("{:.1f} {:.1f} {:.0f} {:.0f} {:.0f}".format(data["mean_ms"], data["stddev_ms"], data["min_ms"], data["max_ms"], data["peak_rss_mb"]))
 ' 2>/dev/null)" || bench_stats=""
     set -e -o pipefail
     if [[ -z "$bench_stats" ]]; then

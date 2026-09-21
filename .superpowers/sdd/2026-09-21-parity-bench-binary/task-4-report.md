@@ -128,3 +128,7 @@ SyntaxError: unexpected character after line continuation character
 ```
 
 Because stderr from the parser is redirected to `/dev/null`, the workflow surfaces only the generic `could not parse bench output` message and the valid JSON object. This identifies a parser implementation blocker, not a missing model or invalid benchmark output.
+
+## Parser fix: 2026-09-21
+
+Replaced the incompatible f-string expression in `scripts/bench.sh` with `str.format()` using the same five JSON fields and numeric format specifiers. This removes the escaped-quote syntax error without changing benchmark semantics or output format. Added `scripts/test-bench-parser.sh`, which validates the recorded JSON shape and confirms malformed JSON and missing required fields still fail.
