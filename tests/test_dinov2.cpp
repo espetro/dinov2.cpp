@@ -515,7 +515,14 @@ TEST_CASE("binary embeddings preview writes little-endian header and payload") {
     file.close();
     std::remove(path.c_str());
     REQUIRE(bytes.size() == 32 + (2 + 4) * sizeof(float));
-    CHECK(std::memcmp(bytes.data(), "D2EMB\\0\\0\\0", 8) == 0);
+    CHECK(bytes[0] == 'D');
+    CHECK(bytes[1] == '2');
+    CHECK(bytes[2] == 'E');
+    CHECK(bytes[3] == 'M');
+    CHECK(bytes[4] == 'B');
+    CHECK(bytes[5] == 0);
+    CHECK(bytes[6] == 0);
+    CHECK(bytes[7] == 0);
     CHECK(bytes[8] == 1);
     CHECK(bytes[9] == 0);
     CHECK(bytes[10] == 32);

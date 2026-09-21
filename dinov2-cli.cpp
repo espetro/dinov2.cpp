@@ -170,7 +170,7 @@ int main(int argc, char **argv) {
                 "%s: nothing to do: no output mode selected; choose one of:\n"
                 "  -c, --classify       print top-k classification labels\n"
                 "  --print-embeddings   emit embeddings JSON to stdout\n"
-                "  -o FNAME, --out      write PCA visualization of patch features to FNAME\n"
+                "  -o FNAME, --out      write PCA output or binary embeddings file/directory\n"
                 "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n",
                 __func__);
         return 1;
@@ -247,7 +247,8 @@ int main(int argc, char **argv) {
     if (params.fnames_inp.size() > 1 && !params.image_out.empty() && !params.classify && params.bench_repeats == 0) {
         std::error_code ec;
         std::filesystem::create_directories(params.image_out, ec);
-        if (ec || !std::filesystem::is_directory(params.image_out)) {
+        const bool output_is_directory = std::filesystem::is_directory(params.image_out, ec);
+        if (ec || !output_is_directory) {
             fprintf(stderr, "%s: failed to create output directory '%s'%s%s\n", __func__, params.image_out.c_str(),
                     ec ? ": " : ".", ec ? ec.message().c_str() : "");
             free_model();

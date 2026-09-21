@@ -726,7 +726,8 @@ bool write_embeddings_binary(const std::string &path, const dino_output &output,
         write_u32(bits);
     };
 
-    file.write("D2EMB\\0\\0\\0", 8);
+    const char magic[8] = {'D', '2', 'E', 'M', 'B', '\0', '\0', '\0'};
+    file.write(magic, sizeof(magic));
     write_u16(1);
     write_u16(32);
     write_u32(hidden_size);
@@ -749,6 +750,16 @@ bool write_embeddings_binary(const std::string &path, const dino_output &output,
 
     if (!file) {
         error = "write failed";
+        return false;
+    }
+    file.flush();
+    if (!file) {
+        error = "flush failed";
+        return false;
+    }
+    file.close();
+    if (!file) {
+        error = "close failed";
         return false;
     }
     return true;
@@ -778,8 +789,8 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "  --embeddings-binary   write preview binary embeddings to -o (unstable format)\n");
     fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the embedding output\n");
     fprintf(out, "  --l2-normalize        L2-normalize emitted embedding vectors\n");
-    fprintf(out, "  -o FNAME, --out       write PCA visualization of patch features to FNAME; with multiple\n");
-    fprintf(out, "                        inputs FNAME is a directory for <input-stem>.pca.png files\n");
+    fprintf(out, "  -o FNAME, --out       write PCA output to FNAME, or binary embeddings file/directory\n");
+    fprintf(out, "                        output when used with --embeddings-binary\n");
     fprintf(out, "\n");
     fprintf(out, "Benchmark:\n");
     fprintf(out, "  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
