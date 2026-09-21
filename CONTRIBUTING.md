@@ -27,6 +27,16 @@ cmake --build --preset debug && ctest --preset debug
 
 Run the same suite under the `asan` and `ubsan` presets before submitting anything that touches memory handling or the compute path.
 
+### Parity check vs PyTorch
+
+`scripts/parity_check.py` compares dinov2-cli embeddings and top-1 classification against the HuggingFace PyTorch reference and reports cosine similarity per image:
+
+```bash
+.venv/bin/python scripts/parity_check.py --gguf models/model.gguf
+```
+
+It needs the `.venv` deps (torch, transformers, pillow) and a downloaded GGUF.
+
 ## Formatting
 
 CI enforces `clang-format-18`. Before committing:
