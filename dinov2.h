@@ -58,19 +58,28 @@ struct dino_model {
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
+// Maximum accepted value for dino_params::n_batch / the --batch flag.
+constexpr uint32_t DINO_MAX_BATCH = 64;
+
+// Valid range for a batch size: 1 <= n <= DINO_MAX_BATCH.
+bool dino_batch_size_valid(int64_t n);
+
 struct dino_params {
     uint32_t    seed               = 42;
     uint32_t    topk               = 5;
+    uint32_t    n_batch            = 1; // max images per forward pass
     bool        enable_flash_attn  = false;
     uint32_t    n_threads          = std::min(4u, std::thread::hardware_concurrency());
     bool        classify           = false;
-    bool        print_embeddings   = false;                 // print cls + pooled embeddings (parsing added separately)
-    bool        print_patch_tokens = false;                 // print per-patch embeddings (parsing added separately)
-    bool        l2_normalize       = false;                 // L2-normalize emitted embedding vectors
-    std::string model              = "../model.gguf";       // model path
-    std::string fname_inp          = "../assets/tench.jpg"; // image path
-    std::string image_out          = "";                    // output of pca visualization (if used)
-    float       eps                = 1e-6f;                 // epsilon used in LN
+    bool        print_embeddings   = false;           // print cls + pooled embeddings (parsing added separately)
+    bool        print_patch_tokens = false;           // print per-patch embeddings (parsing added separately)
+    bool        l2_normalize       = false;           // L2-normalize emitted embedding vectors
+    std::string model              = "../model.gguf"; // model path
+    // input image paths; -i repeats or comma-separates to add more than one.
+    // Images are forwarded to dino_predict in chunks of n_batch.
+    std::vector<std::string> fnames_inp = {"../assets/tench.jpg"};
+    std::string              image_out  = "";    // output of pca visualization (if used; a directory for multi-input)
+    float                    eps        = 1e-6f; // epsilon used in LN
     // Benchmark controls. bench_repeats=0 disables the bench loop (legacy single-shot path).
     // --bench with no count sets bench_repeats to 5 (the default for one-shot "is it faster").
     uint32_t bench_repeats = 0;
@@ -78,8 +87,8 @@ struct dino_params {
     bool     bench_json    = false;
 };
 
-struct ggml_tensor *attn(struct ggml_tensor *cur, int il, struct ggml_context *ctx_cgraph, const dino_model &model,
-                         const dino_params &params);
+struct ggml_tensor *attn(struct ggml_tensor *cur, const float scale, int il, struct ggml_context *ctx_cgraph,
+                         const dino_model &model, const dino_params &params);
 
 struct ggml_tensor *mlp(struct ggml_tensor *cur, int il, struct ggml_context *ctx_cgraph, const dino_model &model,
                         const dino_params &params);
@@ -112,6 +121,14 @@ std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embe
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
                                 const dino_params &params);
 
+// Batch inference: runs the model on up to params.n_batch preprocessed images
+// and returns one dino_output per image, in input order. All images must share
+// the same dimensions (they are packed into a single graph whose batch
+// dimension is imgs.size()). Returns an empty vector on failure.
+std::vector<dino_output> dino_predict(const dino_model &model, const std::vector<ImageF> &imgs,
+                                      const dino_params &params, ggml_gallocr_t allocr);
+
+// Single-image convenience wrapper around the batch form.
 std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img, const dino_params &params,
                                           ggml_gallocr_t allocr);
 

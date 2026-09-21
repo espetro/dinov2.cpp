@@ -144,16 +144,20 @@ Model:
   -t N, --threads       number of threads to use during computation (default: 4)
 
 Input:
-  -i FNAME, --inp       input image file (default: ../assets/tench.jpg)
+  -i FNAME, --inp       input image file; repeat or comma-separate for several
+                        (default: ../assets/tench.jpg)
   -s N, --seed          RNG seed (default: 42)
+  --batch N             max images per forward pass; inputs run in chunks of N
+                        (default: 1, max: 64)
 
 Output modes:
-  -c, --classify        classify the image and print top-k labels (default: off)
+  -c, --classify        classify each input image and print top-k labels (default: off)
   -k N, --topk          top k classes to print (default: 5)
-  --print-embeddings    emit one JSON object on stdout with cls/pooled embeddings
+  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)
   --print-patch-tokens  include per-patch token vectors in the JSON output
   --l2-normalize        L2-normalize emitted embedding vectors
-  -o FNAME, --out       write PCA visualization of patch features to FNAME (default: off)
+  -o FNAME, --out       write PCA visualization of patch features to FNAME; with multiple
+                        inputs FNAME is a directory for <input-stem>.pca.png files
 
 Benchmark:
   --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output
@@ -170,6 +174,8 @@ Workflows:
   dinov2-cli -m model.gguf -i img.jpg --print-embeddings        # embeddings JSON on stdout
   dinov2-cli -m model.gguf -i img.jpg --print-embeddings --print-patch-tokens
                                                                 # + per-patch tokens
+  dinov2-cli -m model.gguf -i a.jpg -i b.jpg --batch 2 --print-embeddings
+                                                                # batch: one JSON line per image
   dinov2-cli -m model.gguf -i img.jpg -o pca.png                # PCA viz of patch features
   dinov2-cli -m model.gguf -i img.jpg --bench --bench-json      # benchmark, JSON lines
 
@@ -185,14 +191,14 @@ flowchart TD
     load_img --> load_model["dino_model_load<br/>(gguf -> ggml tensors)"]
     load_model --> alloc["ggml_gallocr_new"]
     alloc --> branch{--bench?}
-    branch -- no --> single["single-shot predict<br/>+ JSON / top-k / PCA outputs"]
-    branch -- yes --> loop["warmup x N + bench x M<br/>emit JSON or stderr row"]
+    branch -- no --> single["chunked single-shot predict (n_batch per pass)<br/>+ JSONL / top-k / PCA outputs"]
+    branch -- yes --> loop["warmup x N + bench x M<br/>each run covers all inputs<br/>emit JSON or stderr row"]
     single --> cleanup["free ctx + buffer + backend"]
     loop --> cleanup
     cleanup --> exit([return 0])
 ```
 
-Every flag maps to one `dino_params` field (`dinov2.h:61-79`).
+Every flag maps to one `dino_params` field (`dinov2.h:67-88`).
 `--print-embeddings` and `--bench-json` are the stable machine-readable
 outputs; `scripts/bench.sh` parses `--bench-json` lines one by one.
 
@@ -230,6 +236,7 @@ struct dino_model {
 
 struct dino_params {
     uint32_t seed = 42, topk = 5;
+    uint32_t n_batch = 1;           // max images per forward pass (--batch)
     bool enable_flash_attn = false;
     uint32_t n_threads = std::min(4u, std::thread::hardware_concurrency());
     bool classify = false;
@@ -237,7 +244,7 @@ struct dino_params {
     bool print_patch_tokens = false;
     bool l2_normalize = false;
     std::string model = "../model.gguf";
-    std::string fname_inp = "../assets/tench.jpg";
+    std::vector<std::string> fnames_inp = {"../assets/tench.jpg"};
     std::string image_out = "";     // PCA visualization is opt-in via -o
     float eps = 1e-6f;
     uint32_t bench_repeats = 0;     // --bench default: 5
@@ -270,6 +277,11 @@ std::vector<float> interpolate_pos_embed(ImgSize img_size,
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph,
                                 const dino_model &model, const dino_params &params);
 
+// batch form: 1..n_batch same-dims images -> one output per image
+std::vector<dino_output> dino_predict(const dino_model &model,
+                                      const std::vector<ImageF> &imgs,
+                                      const dino_params &params, ggml_gallocr_t allocr);
+// single-image convenience wrapper around the batch form
 std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img,
                                           const dino_params &params, ggml_gallocr_t allocr);
 

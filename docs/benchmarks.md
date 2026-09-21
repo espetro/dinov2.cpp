@@ -67,7 +67,8 @@ cold CPU cache) is in the loop.
 - **Timed runs:** 5 (`--bench-runs 5`).
 - **Threads:** `min(4, hw_concurrency)` -- the same default as
   `dino_params::n_threads`.
-- **Batch:** 1 (no batching support yet; see Caveats).
+- **Batch:** 1 (`--batch` exists for multi-image runs; the tables bench
+  one image per pass).
 - **Backend:** CPU only -- the macos-arm64 row does NOT exercise Metal.
 - **Quantization:** f16 baseline. Pre-quantized GGUFs can be benched by
   pre-staging them under `models/<variant>/model.<q>.gguf` (download from
@@ -101,10 +102,22 @@ they may drift without notice.
 
 ## Caveats
 
-- **No batching.** `dino_predict` graph-sizes for batch=1 only. A future
-  batch N would scale forward-pass time roughly linearly for matmul-heavy
-  layers and sublinearly for attention. Tracked separately; not in this
-  release.
+- **Batching exists but the tables run batch=1.** `dino_predict` runs up
+  to `--batch` same-size images per forward pass and the CLI chunks
+  longer input lists automatically; per-image outputs are identical to
+  batch=1. Per-image throughput improves over batch=1 because the
+  matmul-heavy layers amortize better across the batch dim. Measure it
+  with:
+
+  ```bash
+  dinov2-cli -m models/model.gguf -i a.jpg -i b.jpg --batch 2 \
+      --bench --bench-runs 5 --bench-json
+  ```
+
+  The bench JSON reports `n_images`, `batch`, `ms_per_image` and
+  `images_per_sec` alongside the existing fields (`mean_ms` covers one
+  full pass over all inputs). See [cli.md](cli.md#batch-inference) for
+  the chunking and same-size-per-chunk rules.
 - **No KV cache.** DINOv2 is a vision encoder with no autoregressive
   decode step -- there is no KV cache to populate. The "no KV cache"
   caveat in some other engines doesn't apply here.

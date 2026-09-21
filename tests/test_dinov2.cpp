@@ -6,6 +6,8 @@
 
 #include "dinov2.h"
 #include "ggml.h"
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
 #include "ggml-cpu.h"
 
 #include <cmath>
@@ -31,6 +33,141 @@ struct CtxGuard {
         }
     }
 };
+
+// Deterministic pseudo-random fill so a batch run and a single-image run see
+// identical weights. base + scale * hash keeps norm weights near 1 and other
+// tensors small enough to avoid degenerate softmax saturation.
+static void fill_tensor(ggml_tensor *t, uint32_t seed, float base, float scale) {
+    float        *d = (float *)t->data;
+    const int64_t n = ggml_nelements(t);
+    for (int64_t i = 0; i < n; ++i) {
+        uint32_t x = (uint32_t)i * 2654435761u ^ seed;
+        x ^= x >> 13;
+        x *= 1274126177u;
+        x ^= x >> 16;
+        d[i] = base + scale * ((float)(x % 1000) / 1000.0f);
+    }
+}
+
+// A tiny fully in-memory dino_model (no GGUF fixture needed):
+// hidden=16, heads=2, patch=2, img_size=8 -> 4x4 = 16 patches per image.
+struct TinyModel {
+    dino_model     model;
+    ggml_gallocr_t allocr = nullptr;
+
+    explicit TinyModel(uint32_t n_registers = 0, uint32_t n_layers = 2) {
+        dino_hparams &h       = model.hparams;
+        h.hidden_size         = 16;
+        h.num_attention_heads = 2;
+        h.num_hidden_layers   = n_layers;
+        h.num_classes         = 7;
+        h.num_register_tokens = n_registers;
+        h.patch_size          = 2;
+        h.img_size            = 8;
+
+        model.backend = ggml_backend_cpu_init();
+
+        // embeddings (5) + per-layer tensors (14) + final norm + classifier (4)
+        const int        n_tensors = 5 + 14 * (int)n_layers + 4;
+        ggml_init_params p         = {/*mem_size*/ ggml_tensor_overhead() * n_tensors,
+                              /*mem_buffer*/ nullptr, /*no_alloc*/ true};
+        model.ctx                  = ggml_init(p);
+
+        uint32_t seed   = 0;
+        auto     weight = [&](const char *name, int64_t n0, int64_t n1, int64_t n2, int64_t n3) {
+            ggml_tensor *t = ggml_new_tensor_4d(model.ctx, GGML_TYPE_F32, n0, n1, n2, n3);
+            ggml_set_name(t, name);
+            model.tensors[name] = t;
+            return t;
+        };
+        auto bias = [&](const char *name, int64_t n0) { return weight(name, n0, 1, 1, 1); };
+
+        const uint32_t hsz  = h.hidden_size;
+        const uint32_t ncls = h.num_classes;
+        const uint32_t mlp  = 4 * hsz;
+        const uint32_t grid = h.n_img_embd(); // patches per side at native img_size
+
+        weight("embeddings.patch_embeddings.projection.weight", h.patch_size, h.patch_size, 3, hsz);
+        // conv bias broadcasts over (W, H): stored as (1, 1, hidden, 1) in GGUF
+        weight("embeddings.patch_embeddings.projection.bias", 1, 1, hsz, 1);
+        weight("embeddings.position_embeddings", hsz, grid * grid + 1, 1, 1);
+        bias("embeddings.cls_token", hsz);
+        if (n_registers > 0) {
+            weight("embeddings.register_tokens", hsz, n_registers, 1, 1);
+        }
+
+        for (uint32_t il = 0; il < n_layers; ++il) {
+            const std::string b = "encoder.layer." + std::to_string(il) + ".";
+            bias((b + "norm1.weight").c_str(), hsz);
+            bias((b + "norm1.bias").c_str(), hsz);
+            weight((b + "attention.attention.qkv.weight").c_str(), hsz, 3 * hsz, 1, 1);
+            bias((b + "attention.attention.qkv.bias").c_str(), 3 * hsz);
+            weight((b + "attention.output.dense.weight").c_str(), hsz, hsz, 1, 1);
+            bias((b + "attention.output.dense.bias").c_str(), hsz);
+            bias((b + "layer_scale1.lambda1").c_str(), hsz);
+            bias((b + "norm2.weight").c_str(), hsz);
+            bias((b + "norm2.bias").c_str(), hsz);
+            weight((b + "mlp.fc1.weight").c_str(), hsz, mlp, 1, 1);
+            bias((b + "mlp.fc1.bias").c_str(), mlp);
+            weight((b + "mlp.fc2.weight").c_str(), mlp, hsz, 1, 1);
+            bias((b + "mlp.fc2.bias").c_str(), hsz);
+            bias((b + "layer_scale2.lambda1").c_str(), hsz);
+        }
+
+        bias("layernorm.weight", hsz);
+        bias("layernorm.bias", hsz);
+        weight("classifier.weight", 2 * hsz, ncls, 1, 1);
+        bias("classifier.bias", ncls);
+
+        model.buffer = ggml_backend_alloc_ctx_tensors(model.ctx, model.backend);
+
+        for (auto &[name, t] : model.tensors) {
+            ++seed;
+            // multiplicative params get a positive base so activations stay sane
+            const bool is_scale  = name.find("norm") != std::string::npos && name.find("weight") != std::string::npos;
+            const bool is_lambda = name.find("lambda") != std::string::npos;
+            if (is_scale) {
+                fill_tensor(t, seed, 0.8f, 0.4f);
+            } else if (is_lambda) {
+                fill_tensor(t, seed, 0.4f, 0.6f);
+            } else if (name.find("bias") != std::string::npos) {
+                fill_tensor(t, seed, 0.0f, 0.2f);
+            } else {
+                fill_tensor(t, seed, -0.15f, 0.3f);
+            }
+        }
+
+        allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
+    }
+
+    ~TinyModel() {
+        // same teardown order as the CLI
+        if (model.ctx) {
+            ggml_free(model.ctx);
+        }
+        if (allocr) {
+            ggml_gallocr_free(allocr);
+        }
+        if (model.buffer) {
+            ggml_backend_buffer_free(model.buffer);
+        }
+        if (model.backend) {
+            ggml_backend_free(model.backend);
+        }
+    }
+};
+
+static ImageF make_test_image(int nx, int ny, uint32_t seed) {
+    ImageF img;
+    img.nx = nx;
+    img.ny = ny;
+    img.c  = 3;
+    img.data.resize((size_t)nx * ny * 3);
+    for (size_t i = 0; i < img.data.size(); ++i) {
+        img.data[i] = 0.5f + 0.25f * std::sin((float)(i + 1) * (float)seed * 0.37f);
+    }
+    return img;
+}
 
 } // namespace
 
@@ -397,4 +534,228 @@ TEST_CASE("l2_normalize: already-unit vector unchanged") {
 
     CHECK(v[0] == doctest::Approx(1.0f));
     CHECK(v[1] == doctest::Approx(0.0f));
+}
+
+TEST_CASE("dino_batch_size_valid: bounds") {
+    CHECK_FALSE(dino_batch_size_valid(-1));
+    CHECK_FALSE(dino_batch_size_valid(0));
+    CHECK(dino_batch_size_valid(1));
+    CHECK(dino_batch_size_valid(DINO_MAX_BATCH));
+    CHECK_FALSE(dino_batch_size_valid(DINO_MAX_BATCH + 1));
+    CHECK_FALSE(dino_batch_size_valid(1'000'000));
+}
+
+TEST_CASE("dino_params: n_batch defaults to 1") {
+    dino_params p;
+    CHECK(p.n_batch == 1);
+}
+
+TEST_CASE("dino_params_parse: --batch sets n_batch") {
+    dino_params p;
+    char        a0[] = "prog", a1[] = "--batch", a2[] = "4";
+    char       *argv[] = {a0, a1, a2};
+    CHECK(dino_params_parse(3, argv, p));
+    CHECK(p.n_batch == 4);
+}
+
+TEST_CASE("dino_params: fnames_inp defaults to the bundled sample image") {
+    dino_params p;
+    REQUIRE(p.fnames_inp.size() == 1);
+    CHECK(p.fnames_inp[0] == "../assets/tench.jpg");
+}
+
+TEST_CASE("dino_params_parse: repeated -i and comma lists collect images") {
+    dino_params p;
+    char        a0[] = "prog", a1[] = "-i", a2[] = "a.jpg";
+    char        a3[] = "-i", a4[] = "b.jpg, c.jpg ,d.jpg";
+    char       *argv[] = {a0, a1, a2, a3, a4};
+    CHECK(dino_params_parse(5, argv, p));
+    REQUIRE(p.fnames_inp.size() == 4);
+    CHECK(p.fnames_inp[0] == "a.jpg");
+    CHECK(p.fnames_inp[1] == "b.jpg");
+    CHECK(p.fnames_inp[2] == "c.jpg");
+    CHECK(p.fnames_inp[3] == "d.jpg");
+}
+
+TEST_CASE("dino_params_parse: -i with only empty tokens yields no images") {
+    dino_params p;
+    char        a0[] = "prog", a1[] = "-i", a2[] = " , ,";
+    char       *argv[] = {a0, a1, a2};
+    CHECK(dino_params_parse(3, argv, p));
+    CHECK(p.fnames_inp.empty());
+}
+
+TEST_CASE("dino_predict: batch of 2 equals two single-image runs") {
+    ImageF img0 = make_test_image(8, 8, 1);
+    ImageF img1 = make_test_image(8, 8, 2);
+
+    dino_params params;
+    params.n_batch = 2;
+
+    SUBCASE("no register tokens") {
+        TinyModel m(/*n_registers=*/0);
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        // every graph op is per-batch-element independent, so equality is bitwise
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].pooled == single0[0].pooled);
+        CHECK(batch[1].pooled == single1[0].pooled);
+        CHECK(batch[0].patch_tokens == single0[0].patch_tokens);
+        CHECK(batch[1].patch_tokens == single1[0].patch_tokens);
+    }
+
+    SUBCASE("with register tokens") {
+        TinyModel m(/*n_registers=*/2);
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].pooled == single0[0].pooled);
+        CHECK(batch[1].pooled == single1[0].pooled);
+        CHECK(batch[0].patch_tokens == single0[0].patch_tokens);
+        CHECK(batch[1].patch_tokens == single1[0].patch_tokens);
+    }
+}
+
+TEST_CASE("dino_predict: batch of 2 equals two single-image runs (classify)") {
+    TinyModel m(/*n_registers=*/0);
+    ImageF    img0 = make_test_image(8, 8, 1);
+    ImageF    img1 = make_test_image(8, 8, 2);
+
+    dino_params params;
+    params.n_batch  = 2;
+    params.classify = true;
+    params.topk     = 3;
+
+    const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+    REQUIRE(batch.size() == 2);
+    const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+    const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+    REQUIRE(single0.size() == 1);
+    REQUIRE(single1.size() == 1);
+
+    CHECK(batch[0].cls_token == single0[0].cls_token);
+    CHECK(batch[1].cls_token == single1[0].cls_token);
+    CHECK(batch[0].preds == single0[0].preds);
+    CHECK(batch[1].preds == single1[0].preds);
+    CHECK(batch[0].pred_scores == single0[0].pred_scores);
+    CHECK(batch[1].pred_scores == single1[0].pred_scores);
+}
+
+TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attention)") {
+    ImageF img0 = make_test_image(8, 8, 1);
+    ImageF img1 = make_test_image(8, 8, 2);
+
+    dino_params params;
+    params.n_batch           = 2;
+    params.enable_flash_attn = true;
+
+    // the flash path pads the sequence to a multiple of 32; the TinyModel
+    // seq len (16 patches + 1 cls + registers = 17 or 19) always pads, so
+    // these subcases exercise the padded-KV and B>1 unpad-reshape path
+    SUBCASE("no register tokens") {
+        TinyModel m(/*n_registers=*/0);
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        // flash attention computes each (batch, head, q) row independently,
+        // so equality with single-image runs is bitwise
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].pooled == single0[0].pooled);
+        CHECK(batch[1].pooled == single1[0].pooled);
+        CHECK(batch[0].patch_tokens == single0[0].patch_tokens);
+        CHECK(batch[1].patch_tokens == single1[0].patch_tokens);
+    }
+
+    SUBCASE("with register tokens") {
+        TinyModel m(/*n_registers=*/2);
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].pooled == single0[0].pooled);
+        CHECK(batch[1].pooled == single1[0].pooled);
+        CHECK(batch[0].patch_tokens == single0[0].patch_tokens);
+        CHECK(batch[1].patch_tokens == single1[0].patch_tokens);
+    }
+
+    SUBCASE("classify") {
+        TinyModel m(/*n_registers=*/0);
+
+        params.classify = true;
+        params.topk     = 3;
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].preds == single0[0].preds);
+        CHECK(batch[1].preds == single1[0].preds);
+        CHECK(batch[0].pred_scores == single0[0].pred_scores);
+        CHECK(batch[1].pred_scores == single1[0].pred_scores);
+    }
+}
+
+TEST_CASE("dino_predict: single-image overload matches batch of 1") {
+    TinyModel m;
+    ImageF    img = make_test_image(8, 8, 3);
+
+    dino_params params;
+
+    const auto                   batch1 = dino_predict(m.model, std::vector<ImageF>{img}, params, m.allocr);
+    std::unique_ptr<dino_output> single = dino_predict(m.model, img, params, m.allocr);
+    REQUIRE(batch1.size() == 1);
+    REQUIRE(single != nullptr);
+
+    CHECK(single->cls_token == batch1[0].cls_token);
+    CHECK(single->pooled == batch1[0].pooled);
+    CHECK(single->patch_tokens == batch1[0].patch_tokens);
+}
+
+TEST_CASE("dino_predict: rejects invalid batch inputs") {
+    TinyModel m;
+    ImageF    img  = make_test_image(8, 8, 1);
+    ImageF    wide = make_test_image(10, 8, 1); // different width
+
+    dino_params params;
+    params.n_batch = 2;
+
+    // empty batch
+    CHECK(dino_predict(m.model, std::vector<ImageF>{}, params, m.allocr).empty());
+
+    // more images than n_batch allows
+    CHECK(dino_predict(m.model, std::vector<ImageF>{img, img, img}, params, m.allocr).empty());
+
+    // mismatched dimensions cannot share one graph
+    CHECK(dino_predict(m.model, std::vector<ImageF>{img, wide}, params, m.allocr).empty());
 }
