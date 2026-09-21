@@ -18,6 +18,7 @@
 #include <vector>
 #include <cinttypes>
 #include <algorithm>
+#include <charconv>
 #include <iostream>
 
 #ifdef GGML_USE_CUDA
@@ -690,20 +691,20 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "Model:\n");
     fprintf(out, "  -m FNAME, --model     model path (default: %s)\n", params.model.c_str());
     fprintf(out, "  -fa, --flash_attn     enable flash attention, less accurate (default: off)\n");
-    fprintf(out, "  -t N, --threads       number of threads to use during computation (default: %d)\n",
+    fprintf(out, "  -t N, --threads       number of threads to use during computation, 1 or greater (default: %d)\n",
             params.n_threads);
     fprintf(out, "\n");
     fprintf(out, "Input:\n");
     fprintf(out, "  -i FNAME, --inp       input image file; repeat or comma-separate for several\n");
     fprintf(out, "                        (default: %s)\n",
             params.fnames_inp.empty() ? "" : params.fnames_inp.front().c_str());
-    fprintf(out, "  -s N, --seed          RNG seed (default: %d)\n", params.seed);
+    fprintf(out, "  -s N, --seed          signed 32-bit RNG seed (default: %d)\n", params.seed);
     fprintf(out, "  --batch N             max images per forward pass; inputs run in chunks of N\n");
     fprintf(out, "                        (default: %d, max: %d)\n", params.n_batch, DINO_MAX_BATCH);
     fprintf(out, "\n");
     fprintf(out, "Output modes:\n");
     fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
-    fprintf(out, "  -k N, --topk          top k classes to print (default: %d)\n", params.topk);
+    fprintf(out, "  -k N, --topk          top k classes to print, 1 or greater (default: %d)\n", params.topk);
     fprintf(out, "  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)\n");
     fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the JSON output\n");
     fprintf(out, "  --l2-normalize        L2-normalize emitted embedding vectors\n");
@@ -712,9 +713,9 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "\n");
     fprintf(out, "Benchmark:\n");
     fprintf(out, "  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
-    fprintf(out, "  --bench-runs N        number of timed runs (overrides default 5 when --bench is set)\n");
-    fprintf(out, "  --bench-warmup N      number of warmup runs discarded before timing (default: %u)\n",
-            params.bench_warmup);
+    fprintf(out,
+            "  --bench-runs N        number of timed runs, 1 or greater (overrides default 5 when --bench is set)\n");
+    fprintf(out, "  --bench-warmup N      number of warmup runs, 0 or greater (default: %u)\n", params.bench_warmup);
     fprintf(out, "  --bench-json          emit one JSON object per line to stdout instead of markdown row\n");
     fprintf(out, "\n");
     fprintf(out, "Misc:\n");
@@ -753,6 +754,32 @@ static void append_csv_paths(std::vector<std::string> &out, const std::string &v
     }
 }
 
+template <typename T> static bool parse_integer(const char *value, T &result) {
+    const char *first = value;
+    if (*first == '+') {
+        ++first;
+    }
+    if (*first == '\0') {
+        return false;
+    }
+
+    const char *last = value + std::strlen(value);
+    T           parsed{};
+    const auto  conversion = std::from_chars(first, last, parsed, 10);
+    if (conversion.ec != std::errc() || conversion.ptr != last) {
+        return false;
+    }
+    result = parsed;
+    return true;
+}
+
+[[noreturn]] static void numeric_parse_error(const char *option, const char *value, const char *range, int argc,
+                                             char **argv, const dino_params &params) {
+    fprintf(stderr, "error: %s has invalid value '%s' (expected %s)\n", option, value, range);
+    print_usage(stderr, argc, argv, params);
+    exit(1);
+}
+
 bool dino_params_parse(int argc, char **argv, dino_params &params) {
     // consume argv[++i] as the value for a flag; a trailing flag with no
     // value is a usage error, not a read past argv[argc - 1]
@@ -772,7 +799,12 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
         std::string arg = argv[i];
 
         if (arg == "-s" || arg == "--seed") {
-            params.seed = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed)) {
+                numeric_parse_error(arg.c_str(), value, "a signed 32-bit integer", argc, argv, params);
+            }
+            params.seed = parsed;
         } else if (arg == "-m" || arg == "--model") {
             params.model = next_value(i);
         } else if (arg == "-i" || arg == "--inp") {
@@ -782,19 +814,28 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             }
             append_csv_paths(params.fnames_inp, next_value(i));
         } else if (arg == "--batch") {
-            const long v = std::stol(next_value(i));
-            if (!dino_batch_size_valid(v)) {
-                fprintf(stderr, "error: --batch must be between 1 and %u, got %ld\n", DINO_MAX_BATCH, v);
-                print_usage(stderr, argc, argv, params);
-                exit(1);
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || !dino_batch_size_valid(parsed)) {
+                numeric_parse_error(arg.c_str(), value, "an integer from 1 through 64", argc, argv, params);
             }
-            params.n_batch = (uint32_t)v;
+            params.n_batch = static_cast<uint32_t>(parsed);
         } else if (arg == "-o" || arg == "--out") {
             params.image_out = next_value(i);
         } else if (arg == "-t" || arg == "--threads") {
-            params.n_threads = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.n_threads = static_cast<uint32_t>(parsed);
         } else if (arg == "-k" || arg == "--topk") {
-            params.topk = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.topk = static_cast<uint32_t>(parsed);
         } else if (arg == "-fa" || arg == "--flash_attn") {
             params.enable_flash_attn = true;
         } else if (arg == "-c" || arg == "--classify") {
@@ -806,9 +847,19 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
                 params.bench_repeats = 5;
             }
         } else if (arg == "--bench-runs") {
-            params.bench_repeats = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.bench_repeats = static_cast<uint32_t>(parsed);
         } else if (arg == "--bench-warmup") {
-            params.bench_warmup = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed < 0) {
+                numeric_parse_error(arg.c_str(), value, "a non-negative 32-bit integer", argc, argv, params);
+            }
+            params.bench_warmup = static_cast<uint32_t>(parsed);
         } else if (arg == "--bench-json") {
             params.bench_json = true;
         } else if (arg == "--print-embeddings") {

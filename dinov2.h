@@ -65,7 +65,7 @@ constexpr uint32_t DINO_MAX_BATCH = 64;
 bool dino_batch_size_valid(int64_t n);
 
 struct dino_params {
-    uint32_t    seed               = 42;
+    int32_t     seed               = 42;
     uint32_t    topk               = 5;
     uint32_t    n_batch            = 1; // max images per forward pass
     bool        enable_flash_attn  = false;

@@ -550,6 +550,22 @@ TEST_CASE("dino_params: n_batch defaults to 1") {
     CHECK(p.n_batch == 1);
 }
 
+TEST_CASE("dino_params_parse: accepts valid numeric boundaries") {
+    dino_params p;
+    char        a0[] = "prog", a1[] = "--seed", a2[] = "-2147483648", a3[] = "--threads", a4[] = "1";
+    char        a5[] = "--topk", a6[] = "1", a7[] = "--batch", a8[] = "64";
+    char        a9[] = "--bench-runs", a10[] = "1", a11[] = "--bench-warmup", a12[] = "0";
+    char       *argv[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12};
+
+    CHECK(dino_params_parse(13, argv, p));
+    CHECK(p.seed == INT32_MIN);
+    CHECK(p.n_threads == 1);
+    CHECK(p.topk == 1);
+    CHECK(p.n_batch == DINO_MAX_BATCH);
+    CHECK(p.bench_repeats == 1);
+    CHECK(p.bench_warmup == 0);
+}
+
 TEST_CASE("dino_params_parse: --batch sets n_batch") {
     dino_params p;
     char        a0[] = "prog", a1[] = "--batch", a2[] = "4";
