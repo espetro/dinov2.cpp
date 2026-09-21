@@ -65,12 +65,18 @@ const char *get_val_str(const struct gguf_context *ctx, const char *key) {
 //
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params) {
-    // 1) resize to 256x256 bicubic
-    Image image = resize_bicubic(img, 256, 256);
+    // 1) shortest-edge resize preserving aspect ratio (HF BitImageProcessor
+    //    parity): scale so the shorter side becomes 256.
+    constexpr int short_edge = 256;
+    const float   scale      = (float)short_edge / (float)std::min(img.nx, img.ny);
+    const int     new_w      = std::max((int)std::lround(img.nx * scale), 1);
+    const int     new_h      = std::max((int)std::lround(img.ny * scale), 1);
+    Image         image      = resize_bicubic(img, new_w, new_h);
 
     constexpr int crop_size = 224;
-    const int     offset_w  = (image.nx - crop_size) / 2;
-    const int     offset_h  = (image.ny - crop_size) / 2;
+    // clamp >= 0 for safety (min dimension is 256 > 224 by construction)
+    const int offset_w = std::max((image.nx - crop_size) / 2, 0);
+    const int offset_h = std::max((image.ny - crop_size) / 2, 0);
 
     // 2) center crop
     Image cropped;
