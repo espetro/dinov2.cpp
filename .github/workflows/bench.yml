@@ -102,7 +102,7 @@ jobs:
             target_dir="models/dinov2-vit-${variant}-patch14"
             mkdir -p "$target_dir"
             echo "Downloading $repo -> $target_dir/model.gguf"
-            huggingface-cli download \
+            hf download \
               --repo-type model \
               --local-dir "$target_dir" \
               "$repo" "model.gguf"

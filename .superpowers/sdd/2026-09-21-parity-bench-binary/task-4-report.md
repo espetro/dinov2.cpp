@@ -66,3 +66,7 @@ The command exited before `Verify staged weights`, `Run benchmarks`, and `Upload
 The workflow must replace the deprecated `huggingface-cli` invocation with the installed `hf download` command, or otherwise pin a working Hugging Face CLI invocation, before another Ubuntu evidence run can proceed. After that fix is published, dispatch at least the small model again and verify the artifact and provenance before replacing placeholder data. The local seven-commit divergence must also be resolved by publishing the code to be measured; this task did not push it.
 
 No models, build outputs, or release artifacts were added to the repository.
+
+## Fix note
+
+The benchmark workflow now uses the supported `hf download` command from the already-installed `huggingface_hub[cli]` package. The repository, local directory, and `model.gguf` arguments are unchanged; no benchmark semantics or inputs were changed.
