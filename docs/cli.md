@@ -46,7 +46,7 @@ retrieval context, see the official [DINOv2 results](https://github.com/facebook
 
 ## Flags
 
-Adapted from `dinov2-cli --help` (v0.3.0); see `--help` for the exact
+Adapted from `dinov2-cli --help` (v0.4.0); see `--help` for the exact
 wording. Flags that take a value read it from the next argument.
 
 | Flag | Default | Effect |
@@ -57,6 +57,9 @@ wording. Flags that take a value read it from the next argument.
 | `-i FNAME`, `--inp` | `../assets/tench.jpg` | input image file; repeat or comma-separate for several |
 | `-s N`, `--seed` | 42 | RNG seed |
 | `--batch N` | 1 | max images per forward pass (max 64); inputs run in chunks of N |
+| `--preprocess MODE` | `bounded` | feature-mode preprocessing: `bounded` (shortest edge capped at 518), `hf` (shortest edge 256 + center crop 224), `crop518` (shortest edge 518 + center crop 518, fixed grid) |
+| `--no-resize` | off | keep native resolution under `--preprocess bounded` (still capped by `--max-tokens`) |
+| `--max-tokens N` | `4*(518/patch)^2` | hard cap on patch tokens per image after preprocessing; 0 disables |
 | `-c`, `--classify` | off | classify each input image and print top-k labels |
 | `-k N`, `--topk` | 5 | number of classes printed with `-c`; must not exceed the model's class count |
 | `--print-embeddings` | off | emit one JSON object for one input; one JSON object per line (JSONL) for multiple inputs |
@@ -69,7 +72,7 @@ wording. Flags that take a value read it from the next argument.
 | `--bench-warmup N` | 1 | warmup runs discarded before timing |
 | `--bench-json` | off | bench result as JSON on stdout |
 | `-h`, `--help` | | print usage and exit |
-| `--version` | | print `dinov2-cli 0.3.0` and exit |
+| `--version` | | print `dinov2-cli 0.4.0` and exit |
 
 ## Output modes
 
@@ -138,6 +141,35 @@ DINOv2 task heads other than the existing ImageNet classifier, including depth
 and segmentation, are outside this interface. DINOv3 is a separate
 architecture and resource target and is also out of scope.
 
+## Feature-mode preprocessing
+
+Feature mode (everything except `-c`) selects one of three recipes with
+`--preprocess`:
+
+- `bounded` (default): if the image's shortest edge exceeds 518 px it is
+  bicubic-resized to 518 preserving aspect ratio, then each dimension is
+  aligned up to a multiple of the patch size. Smaller images keep their
+  size, aligned the same way. Use it for PCA visualization and dense
+  features: it preserves the whole image without unbounded memory.
+- `hf`: the Hugging Face `AutoImageProcessor` recipe for `facebook/dinov2-*`
+  checkpoints (shortest edge 256, center crop 224x224, ImageNet mean/std),
+  producing a fixed 16x16 = 256-token grid at patch 14. Use it when
+  comparing outputs against HF feature pipelines token for token.
+- `crop518`: shortest edge 518 plus a 518x518 center crop, producing a
+  fixed 37x37 = 1369-token grid at patch 14. Every input shares dims, so
+  this is the batch-safe mode for mixed aspect ratios.
+
+`--no-resize` disables the 518 bound under `bounded` (native resolution,
+aligned to patch multiples); it is rejected with `hf`/`crop518` and with
+`-c`, as is `--preprocess`.
+
+`--max-tokens N` caps the patch-token count per image after preprocessing
+(default `4*(518/patch)^2`, e.g. 5476 at patch 14; `0` disables). It is
+checked before preprocessing and before any graph is constructed, so
+oversize inputs fail fast with exit 1. The cap also guards `--no-resize`
+runs: attention memory grows quadratically in token count, and native
+megapixel inputs can request hundreds of GB.
+
 ## Batch inference
 
 Multiple inputs are given by repeating `-i` and/or comma-separating
@@ -158,9 +190,12 @@ preprocessing. Chunks are formed in input order, so a mixed-size list
 works only when same-size images land in the same chunk (different
 chunks may differ). A chunk that mixes sizes aborts the run with an
 error naming the conflicting inputs. In classify mode every input is
-center-cropped to 224x224, so dims always match there; feature mode
-keeps each image's native size, which is where mixed inputs matter.
-When in doubt, group same-size inputs together or use `-c`.
+center-cropped to 224x224, so dims always match there. Feature mode
+bounds the shortest edge to 518 by default (`--preprocess bounded`),
+but different aspect ratios still produce different grids; use
+`--preprocess crop518` for a fixed 518x518 grid that always matches.
+When in doubt, group same-aspect-ratio inputs together, use
+`crop518`, or use `-c`.
 
 ## Embeddings JSON schema
 
@@ -172,8 +207,10 @@ When in doubt, group same-size inputs together or use `-c`.
 ```json
 {
   "model": "models/model.gguf",
+  "index": 0,
   "image": "assets/tench.jpg",
   "n_patches": 1320,
+  "grid": {"h": 30, "w": 44},
   "hidden": 384,
   "cls": [0.46475, 2.47845, -5.207, -1.29146, ...],
   "pooled": [0.46475, 2.47845, -5.207, -1.29146, ...]
@@ -185,8 +222,10 @@ Fields:
 | Field | Type | Present when |
 |:------|:-----|:-------------|
 | `model` | string | always |
+| `index` | int | always |
 | `image` | string | always |
 | `n_patches` | int | always |
+| `grid` | `{"h": int, "w": int}` | always |
 | `hidden` | int | always |
 | `cls` | float[`hidden`] | always |
 | `pooled` | float[2*`hidden`] | feature mode only (absent with `-c`) |
@@ -197,12 +236,17 @@ Fields:
   `dinov2-vit-*` component (for example
   `models/dinov2-vit-small-patch14/model.gguf`) reports that component;
   anything else reports the path exactly as passed to `-m`.
+- `index`: 0-based position of the input in the `-i` list. Records are
+  emitted in input order, so `index` equals the JSONL line number; it is
+  the join key when `image` is ambiguous (duplicate paths, sanitized
+  stems in output filenames).
 - `image`: the input path this line describes, exactly as passed to
-  `-i`. With several inputs it is what tells lines apart.
-- `n_patches`: actual patch count after the input is resized up to a
-  multiple of the patch size. Not necessarily the model's native grid.
-  Under `-c` the input is always 224x224, so this is 256 for patch14
-  models.
+  `-i`.
+- `n_patches`: actual patch count after preprocessing. Not necessarily
+  the model's native grid. Under `-c` the input is always 224x224, so
+  this is 256 for patch14 models.
+- `grid`: patch-grid dimensions `{"h": ny/patch_size, "w":
+  nx/patch_size}` of the preprocessed image; `h * w == n_patches`.
 - `hidden`: embedding width. 384, 768, 1024, 1536 for the small, base,
   large, giant models.
 - `cls`: final-layernorm CLS token, equal to the HF model's
@@ -212,10 +256,10 @@ Fields:
 - `pooled`: `[cls || mean(patch_tokens)]`, `cls` in the first `hidden`
   elements. This is the exact feature the ImageNet1k linear head
   consumes; use it for linear-eval-style downstream tasks.
-- `patches`: per-patch token vectors in row-major order, patch index to
-  `hidden` floats. Row `p` is patch `p` scanning left-to-right,
-  top-to-bottom over the `(ny/patch_size, nx/patch_size)` grid. Register
-  tokens are excluded. Absent under `-c` even when the flag is passed.
+- `patches`: per-patch token vectors, flat row-major `grid.h * grid.w *
+  hidden` floats. Row `p` is patch `p` scanning left-to-right,
+  top-to-bottom over the `grid` grid. Register tokens are excluded.
+  Absent under `-c` even when the flag is passed.
 - `topk`: array of `{"idx": int, "label": string, "prob": float}` sorted
   by descending softmax probability, `k` entries long (`-k`, default 5).
   `label` comes from the GGUF `id2label` map.
@@ -230,20 +274,22 @@ and files are named `<zero-based-index>-<sanitized-input-stem>.d2e`, which
 prevents collisions between inputs that share a stem. Errors are reported on
 stderr and return exit 1.
 
-Version 1 starts with this exact 32-byte little-endian header. Readers should
+Version 2 starts with this exact 40-byte little-endian header. Readers should
 reject unknown flag bits and must not assume this preview format will remain
 compatible:
 
 | Offset | Size | Field |
 |:--:|:--:|:--|
 | 0 | 8 | Magic `D2EMB\\0\\0\\0` |
-| 8 | 2 | Format version `1` |
-| 10 | 2 | Header size `32` |
+| 8 | 2 | Format version `2` |
+| 10 | 2 | Header size `40` |
 | 12 | 4 | Hidden dimension `H` |
 | 16 | 4 | Pooled dimension `2H` |
 | 20 | 4 | Patch count `P`, or zero when absent |
 | 24 | 4 | Flags: bit 0 patches, bit 1 L2 requested |
 | 28 | 4 | Reserved zero |
+| 32 | 4 | Patch grid width `W`, or zero when patches are absent |
+| 36 | 4 | Patch grid height `H_grid`, or zero when patches are absent |
 
 The float32 payload is contiguous and ordered as `cls[H]`, `pooled[2H]`, then
 optional row-major `patches[P][H]`. Pooled is `[cls || mean(non-register
@@ -378,7 +424,7 @@ less accurate, so avoid it when comparing against HF outputs.
 | Code | Meaning |
 |:-----|:--------|
 | 0 | success; also `--help` and `--version` |
-| 1 | unknown argument, no input images, image load failure, model load failure, mixed-size batch chunk, no output mode selected, or graph compute failure |
+| 1 | unknown argument, no input images, image load failure, model load failure, mixed-size batch chunk, `--max-tokens` cap exceeded, no output mode selected, allocation failure, or graph compute failure |
 
 Error messages go to stderr; the model-load failure also prints the
 `hf download` hint shown above.
@@ -395,10 +441,14 @@ hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 
 **`-c` always runs at 224x224**: classification follows the HF
 `preprocessor_config.json` recipe: resize so the shortest edge is 256
-(bicubic, aspect preserved), then center-crop 224x224. The GGUFs declare
-`img_size=518`, which applies to feature mode instead: there the input
-is resized up to a multiple of the patch size and position embeddings
-are interpolated, so arbitrary sizes work.
+(bicubic, aspect preserved), then center-crop 224x224. Feature mode
+instead bounds the shortest edge to 518 by default
+(`--preprocess bounded`), then aligns each dimension up to a multiple
+of the patch size and interpolates position embeddings, so arbitrary
+sizes work without unbounded memory. `--preprocess hf` applies the HF
+recipe (256 + 224 crop) for feature parity checks, `--preprocess
+crop518` fixes every input at 518x518, and `--no-resize` keeps native
+resolution subject to `--max-tokens`.
 
 **Preprocessing defaults**: ImageNet mean/std (0.485, 0.456, 0.406 /
 0.229, 0.224, 0.225), bicubic interpolation, RGB channel order. Matches

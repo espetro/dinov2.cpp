@@ -103,12 +103,16 @@ static std::string binary_out_path(const std::string &out_path, const std::strin
 // cls (both modes), pooled (feature mode), topk (classify mode),
 // patches (feature mode + --print-patch-tokens). With multiple inputs the
 // caller prints one such line per image (JSONL).
-static void print_embeddings_json(const dino_params &params, const dino_model &model, const ImageF &img_f,
+static void print_embeddings_json(const dino_params &params, const dino_model &model, const ImageF &img_f, size_t index,
                                   const std::string &image_path, const dino_output &output) {
-    const int n_patches = (img_f.ny / model.hparams.patch_size) * (img_f.nx / model.hparams.patch_size);
-    fprintf(stdout, "{\"model\":\"%s\",\"image\":\"%s\",\"n_patches\":%d,\"hidden\":%u",
-            json_escape(model_label_from_path(params.model)).c_str(), json_escape(image_path).c_str(), n_patches,
-            model.hparams.hidden_size);
+    const int grid_w    = img_f.nx / model.hparams.patch_size;
+    const int grid_h    = img_f.ny / model.hparams.patch_size;
+    const int n_patches = grid_h * grid_w;
+    fprintf(stdout,
+            "{\"model\":\"%s\",\"index\":%zu,\"image\":\"%s\",\"n_patches\":%d,"
+            "\"grid\":{\"h\":%d,\"w\":%d},\"hidden\":%u",
+            json_escape(model_label_from_path(params.model)).c_str(), index, json_escape(image_path).c_str(), n_patches,
+            grid_h, grid_w, model.hparams.hidden_size);
     if (output.cls_token) {
         fprintf(stdout, ",\"cls\":[");
         print_float_array(*output.cls_token);
@@ -224,10 +228,30 @@ int main(int argc, char **argv) {
     // preprocess every input; classify mode always yields 224x224 crops
     std::vector<ImageF> imgs_f;
     imgs_f.reserve(imgs.size());
-    for (const Image &img : imgs) {
-        ImageF img_f =
-            params.classify ? dino_classify_preprocess(img, model.hparams) : dino_preprocess(img, model.hparams);
-        fprintf(stderr, "%s: preprocessed image (%d x %d)\n", __func__, img_f.nx, img_f.ny);
+    const int64_t token_limit =
+        params.max_tokens >= 0 ? params.max_tokens : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
+    for (size_t i = 0; i < imgs.size(); ++i) {
+        const Image &img = imgs[i];
+        // hard cap on patch tokens, applied on the prospective preprocessed
+        // size so oversize inputs fail before the (expensive) resize and
+        // before any graph is constructed
+        if (token_limit > 0 && !params.classify) {
+            const ImgSize out_size  = dino_feature_output_size(img, model.hparams, params);
+            const int64_t n_patches = (int64_t)(out_size.height / (int)model.hparams.patch_size) *
+                                      (out_size.width / (int)model.hparams.patch_size);
+            if (n_patches > token_limit) {
+                fprintf(stderr,
+                        "error: image '%s' yields %lld patch tokens after preprocessing (limit %lld). "
+                        "Use a smaller input, --preprocess crop518, or raise --max-tokens.\n",
+                        params.fnames_inp[i].c_str(), (long long)n_patches, (long long)token_limit);
+                free_model();
+                return 1;
+            }
+        }
+        ImageF img_f = params.classify ? dino_classify_preprocess(img, model.hparams)
+                                       : dino_feature_preprocess(img, model.hparams, params);
+        fprintf(stderr, "%s: preprocessed image '%s' (%d x %d)\n", __func__, params.fnames_inp[i].c_str(), img_f.nx,
+                img_f.ny);
         imgs_f.push_back(std::move(img_f));
     }
     std::vector<Image>().swap(imgs);
@@ -268,6 +292,11 @@ int main(int argc, char **argv) {
     {
         ggml_backend_synchronize(model.backend);
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
+        if (!allocr) {
+            fprintf(stderr, "%s: failed to create graph allocator\n", __func__);
+            free_model();
+            return 1;
+        }
 
         if (params.bench_repeats == 0) {
             // Single-shot path: run the inputs through dino_predict in chunks
@@ -293,7 +322,7 @@ int main(int argc, char **argv) {
                     const std::string &image_path = params.fnames_inp[idx];
 
                     if (params.print_embeddings) {
-                        print_embeddings_json(params, model, imgs_f[idx], image_path, output);
+                        print_embeddings_json(params, model, imgs_f[idx], idx, image_path, output);
                     }
                     if (params.embeddings_binary) {
                         const std::string out_path =
@@ -302,6 +331,8 @@ int main(int argc, char **argv) {
                         if (!write_embeddings_binary(out_path, output, model.hparams.hidden_size,
                                                      static_cast<uint32_t>((imgs_f[idx].ny / model.hparams.patch_size) *
                                                                            (imgs_f[idx].nx / model.hparams.patch_size)),
+                                                     static_cast<uint32_t>(imgs_f[idx].nx / model.hparams.patch_size),
+                                                     static_cast<uint32_t>(imgs_f[idx].ny / model.hparams.patch_size),
                                                      params.print_patch_tokens, params.l2_normalize, error)) {
                             fprintf(stderr, "%s: failed to write binary embeddings '%s': %s\n", __func__,
                                     out_path.c_str(), error.c_str());

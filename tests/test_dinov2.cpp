@@ -396,10 +396,10 @@ TEST_CASE("dino_preprocess: image smaller than patch triggers resize") {
 
 TEST_CASE("dino_preprocess: normalization formula across all channels") {
     Image img;
-    img.nx = 14;
-    img.ny = 14;
+    img.nx = 15;
+    img.ny = 15;
     img.c  = 3;
-    img.data.assign((size_t)14 * 14 * 3, 0);
+    img.data.assign((size_t)15 * 15 * 3, 0);
 
     // R plane 255, G 128, B 0.
     for (size_t i = 0; i < img.data.size(); i += 3) {
@@ -499,6 +499,220 @@ TEST_CASE("dino_classify_preprocess: wide input preserves aspect (shortest-edge 
     }
 }
 
+TEST_CASE("dino_preprocess: true ceil keeps patch-aligned dims unchanged") {
+    // Under true ceil a dimension already at a multiple of patch_size is
+    // unchanged: 518 -> 518 (37 patches), not 532 (38) as strict round-up did.
+    dino_hparams h;
+    h.img_size   = 224;
+    h.patch_size = 14;
+
+    Image img;
+    img.nx = 518;
+    img.ny = 518;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_preprocess(img, h);
+    CHECK(out.nx == 518);
+    CHECK(out.ny == 518);
+
+    Image img112;
+    img112.nx = 112;
+    img112.ny = 56;
+    img112.c  = 3;
+    img112.data.assign((size_t)112 * 56 * 3, 128);
+
+    const auto out112 = dino_preprocess(img112, h);
+    CHECK(out112.nx == 112);
+    CHECK(out112.ny == 56);
+}
+
+TEST_CASE("dino_feature_preprocess: bounded resizes shortest edge to 518") {
+    // 2000x800 -> shortest edge 518, aspect preserved: 800 -> 518,
+    // 2000 -> lround(2000 * 518/800) = 1295, then true-ceil to 1298.
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+
+    const int expected_w = ((int)std::lround(2000 * 518.0 / 800.0) + 13) / 14 * 14;
+    CHECK(out.ny == 518);
+    CHECK(out.nx == expected_w);
+    CHECK(out.nx % 14 == 0);
+    CHECK(out.ny % 14 == 0);
+    // bounded grid stays under the default cap (4 * 37 * 37 = 5476)
+    CHECK((int64_t)(out.ny / 14) * (out.nx / 14) <= (int64_t)dino_default_max_tokens(h.patch_size));
+}
+
+TEST_CASE("dino_feature_preprocess: bounded leaves images under the bound untouched") {
+    // 500x375: shortest edge <= 518, so only true-ceil alignment applies:
+    // 500 -> 504, 375 -> 378.
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+
+    Image img;
+    img.nx = 500;
+    img.ny = 375;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out    = dino_feature_preprocess(img, h, params);
+    const auto native = dino_preprocess(img, h);
+
+    CHECK(out.nx == 504);
+    CHECK(out.ny == 378);
+    CHECK(out.nx == native.nx);
+    CHECK(out.ny == native.ny);
+}
+
+TEST_CASE("dino_feature_preprocess: no_resize keeps native resolution") {
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+    params.no_resize = true;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+    // no bound: 2000 -> 2002, 800 -> 812 (true ceil to patch multiples)
+    CHECK(out.nx == ((2000 + 13) / 14) * 14);
+    CHECK(out.ny == ((800 + 13) / 14) * 14);
+}
+
+TEST_CASE("dino_feature_preprocess: hf yields 224x224") {
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+    params.preprocess_mode = dino_preprocess_mode::hf;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+    CHECK(out.nx == 224);
+    CHECK(out.ny == 224);
+}
+
+TEST_CASE("dino_feature_preprocess: crop518 yields a fixed 518x518 grid") {
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+    params.preprocess_mode = dino_preprocess_mode::crop518;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+    CHECK(out.nx == 518);
+    CHECK(out.ny == 518);
+    // different aspect, same output dims: batch-safe
+    img.nx = 800;
+    img.ny = 2000;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+    const auto out2 = dino_feature_preprocess(img, h, params);
+    CHECK(out2.nx == 518);
+    CHECK(out2.ny == 518);
+}
+
+TEST_CASE("dino_feature_output_size matches dino_feature_preprocess dims") {
+    dino_hparams h;
+    h.patch_size = 14;
+
+    const int sizes[][2] = {{2000, 800}, {518, 518}, {612, 408}, {3440, 5601}, {15, 15}, {1, 1}, {112, 56}};
+    for (const auto &s : sizes) {
+        for (auto mode : {dino_preprocess_mode::bounded, dino_preprocess_mode::hf, dino_preprocess_mode::crop518}) {
+            dino_params params;
+            params.preprocess_mode = mode;
+            Image img;
+            img.nx = s[0];
+            img.ny = s[1];
+            img.c  = 3;
+            img.data.assign((size_t)img.nx * img.ny * 3, 128);
+            const ImgSize target = dino_feature_output_size(img, h, params);
+            const ImageF  out    = dino_feature_preprocess(img, h, params);
+            CHECK(out.nx == target.width);
+            CHECK(out.ny == target.height);
+            CHECK(out.nx % 14 == 0);
+            CHECK(out.ny % 14 == 0);
+        }
+    }
+    // --no-resize under bounded: dims equal the true-ceil native alignment
+    {
+        dino_params params;
+        params.no_resize = true;
+        Image img;
+        img.nx = 2000;
+        img.ny = 800;
+        img.c  = 3;
+        img.data.assign((size_t)img.nx * img.ny * 3, 128);
+        const ImgSize target = dino_feature_output_size(img, h, params);
+        const ImageF  out    = dino_feature_preprocess(img, h, params);
+        CHECK(out.nx == target.width);
+        CHECK(out.ny == target.height);
+    }
+}
+
+TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess under the bound") {
+    // shortest edge <= 518: bounded does a single resample to the same
+    // patch-aligned dims dino_preprocess computes, so bytes must match.
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+
+    Image img;
+    img.nx = 500;
+    img.ny = 375;
+    img.c  = 3;
+    img.data.resize((size_t)img.nx * img.ny * 3);
+    for (size_t i = 0; i < img.data.size(); ++i) {
+        img.data[i] = (uint8_t)(i % 251);
+    }
+
+    const auto a = dino_feature_preprocess(img, h, params);
+    const auto b = dino_preprocess(img, h);
+    CHECK(a.nx == b.nx);
+    CHECK(a.ny == b.ny);
+    CHECK(a.data == b.data);
+}
+
+TEST_CASE("dino_classify_preprocess: shared helper keeps 224x224 output") {
+    // classify and hf feature mode run the same (256, 224) recipe, so their
+    // outputs must be identical byte for byte.
+    dino_hparams h;
+    dino_params  params;
+    params.preprocess_mode = dino_preprocess_mode::hf;
+
+    Image img;
+    img.nx = 512;
+    img.ny = 128;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 200);
+
+    const auto cls = dino_classify_preprocess(img, h);
+    const auto hf  = dino_feature_preprocess(img, h, params);
+    CHECK(cls.nx == hf.nx);
+    CHECK(cls.ny == hf.ny);
+    CHECK(cls.data == hf.data);
+}
+
 TEST_CASE("binary embeddings preview writes little-endian header and payload") {
     const std::string path = "/tmp/dinov2-binary-preview-test.d2e";
     dino_output       output;
@@ -507,14 +721,14 @@ TEST_CASE("binary embeddings preview writes little-endian header and payload") {
     output.patch_tokens = std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f};
 
     std::string error;
-    REQUIRE(write_embeddings_binary(path, output, 2, 2, false, false, error));
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, 5, 3, false, false, error));
     REQUIRE(error.empty());
 
     std::ifstream                    file(path, std::ios::binary);
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
     std::remove(path.c_str());
-    REQUIRE(bytes.size() == 32 + (2 + 4) * sizeof(float));
+    REQUIRE(bytes.size() == 40 + (2 + 4) * sizeof(float));
     CHECK(bytes[0] == 'D');
     CHECK(bytes[1] == '2');
     CHECK(bytes[2] == 'E');
@@ -523,15 +737,17 @@ TEST_CASE("binary embeddings preview writes little-endian header and payload") {
     CHECK(bytes[5] == 0);
     CHECK(bytes[6] == 0);
     CHECK(bytes[7] == 0);
-    CHECK(bytes[8] == 1);
+    CHECK(bytes[8] == 2); // version 2
     CHECK(bytes[9] == 0);
-    CHECK(bytes[10] == 32);
+    CHECK(bytes[10] == 40); // header size
     CHECK(bytes[11] == 0);
     CHECK(bytes[12] == 2);
     CHECK(bytes[16] == 4);
     CHECK(bytes[20] == 0);
     CHECK(bytes[24] == 0);
     CHECK(bytes[28] == 0);
+    CHECK(bytes[32] == 0); // grid fields are zero when patches are absent
+    CHECK(bytes[36] == 0);
 
     const auto read_float = [&](size_t offset) {
         uint32_t bits = static_cast<uint32_t>(bytes[offset]) | (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
@@ -541,27 +757,29 @@ TEST_CASE("binary embeddings preview writes little-endian header and payload") {
         std::memcpy(&value, &bits, sizeof(value));
         return value;
     };
-    CHECK(read_float(32) == doctest::Approx(1.0f));
-    CHECK(read_float(36) == doctest::Approx(2.0f));
     CHECK(read_float(40) == doctest::Approx(1.0f));
     CHECK(read_float(44) == doctest::Approx(2.0f));
-    CHECK(read_float(48) == doctest::Approx(3.0f));
-    CHECK(read_float(52) == doctest::Approx(4.0f));
+    CHECK(read_float(48) == doctest::Approx(1.0f));
+    CHECK(read_float(52) == doctest::Approx(2.0f));
+    CHECK(read_float(56) == doctest::Approx(3.0f));
+    CHECK(read_float(60) == doctest::Approx(4.0f));
 
-    REQUIRE(write_embeddings_binary(path, output, 2, 2, true, true, error));
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, 5, 3, true, true, error));
     file.clear();
     file.open(path, std::ios::binary);
     const std::vector<unsigned char> patch_bytes((std::istreambuf_iterator<char>(file)),
                                                  std::istreambuf_iterator<char>());
     file.close();
     std::remove(path.c_str());
-    REQUIRE(patch_bytes.size() == 32 + (2 + 4 + 4) * sizeof(float));
+    REQUIRE(patch_bytes.size() == 40 + (2 + 4 + 4) * sizeof(float));
     CHECK(patch_bytes[20] == 2);
     CHECK(patch_bytes[24] == 3);
-    CHECK(patch_bytes[56] == 0); // payload remains CLS, pooled, then patches
-    CHECK(patch_bytes[57] == 0);
-    CHECK(patch_bytes[58] == 160);
-    CHECK(patch_bytes[59] == 64); // 5.0f in little-endian
+    CHECK(patch_bytes[32] == 5); // grid_w
+    CHECK(patch_bytes[36] == 3); // grid_h
+    CHECK(patch_bytes[64] == 0); // payload remains CLS, pooled, then patches
+    CHECK(patch_bytes[65] == 0);
+    CHECK(patch_bytes[66] == 160);
+    CHECK(patch_bytes[67] == 64); // 5.0f in little-endian
 }
 
 TEST_CASE("l2_normalize: produces unit norm and preserves direction") {

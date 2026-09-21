@@ -64,6 +64,23 @@ constexpr uint32_t DINO_MAX_BATCH = 64;
 // Valid range for a batch size: 1 <= n <= DINO_MAX_BATCH.
 bool dino_batch_size_valid(int64_t n);
 
+// Feature-mode preprocessing recipes selectable via --preprocess.
+//   bounded: resize so the shortest edge is DINO_FEATURE_SHORT_EDGE when
+//            larger, then align to patch multiples (default)
+//   hf:      HF AutoImageProcessor recipe, shortest edge 256 + center crop 224
+//   crop518: shortest edge 518 + center crop 518x518 (fixed grid, batch-safe)
+enum class dino_preprocess_mode { bounded, hf, crop518 };
+
+// Shortest-edge bound for the bounded preprocessing mode.
+constexpr int DINO_FEATURE_SHORT_EDGE = 518;
+
+// Default --max-tokens: 4x the square grid at the 518 bound for the model's
+// patch size (patch 14 gives 4 * 37 * 37 = 5476).
+inline uint64_t dino_default_max_tokens(uint32_t patch_size) {
+    const uint64_t side = ((uint64_t)DINO_FEATURE_SHORT_EDGE + patch_size - 1) / patch_size;
+    return 4 * side * side;
+}
+
 struct dino_params {
     int32_t     seed               = 42;
     uint32_t    topk               = 5;
@@ -86,6 +103,12 @@ struct dino_params {
     uint32_t bench_repeats = 0;
     uint32_t bench_warmup  = 1;
     bool     bench_json    = false;
+    // Feature-mode preprocessing; ignored (rejected) with -c.
+    dino_preprocess_mode preprocess_mode = dino_preprocess_mode::bounded;
+    bool                 no_resize       = false; // bounded mode: keep native resolution
+    // Hard cap on patch tokens per image after preprocessing. -1: default
+    // (dino_default_max_tokens from the model's patch size); 0 disables.
+    int64_t max_tokens = -1;
 };
 
 struct ggml_tensor *attn(struct ggml_tensor *cur, const float scale, int il, struct ggml_context *ctx_cgraph,
@@ -115,6 +138,14 @@ ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 
 ImageF dino_preprocess(const Image &img, const dino_hparams &params);
 
+// Feature-mode preprocessing: dispatches on params.preprocess_mode
+// (bounded / hf / crop518; --no-resize applies to bounded only).
+ImageF dino_feature_preprocess(const Image &img, const dino_hparams &hparams, const dino_params &params);
+
+// Output dimensions dino_feature_preprocess will produce for img, without
+// doing the work. Used to apply --max-tokens before preprocessing.
+ImgSize dino_feature_output_size(const Image &img, const dino_hparams &hparams, const dino_params &params);
+
 bool dino_model_load(ImgSize img_size, const std::string &fname, dino_model &model, const dino_params &params);
 
 std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embed_data, const dino_hparams &hparams);
@@ -135,9 +166,11 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
 
 void print_usage(FILE *out, int argc, char **argv, const dino_params &params);
 
-// Write the intentionally unstable version-1 D2EMB preview format.
+// Write the intentionally unstable version-2 D2EMB preview format.
+// grid_w/grid_h are the patch-grid dimensions (zero when patches are absent).
 // The vectors are expected to already have the requested normalization applied.
 bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
-                             uint32_t patch_count, bool include_patches, bool normalized, std::string &error);
+                             uint32_t patch_count, uint32_t grid_w, uint32_t grid_h, bool include_patches,
+                             bool normalized, std::string &error);
 
 bool dino_params_parse(int argc, char **argv, dino_params &params);

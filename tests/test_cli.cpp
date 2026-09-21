@@ -6,6 +6,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <chrono>
 #ifdef _WIN32
@@ -173,6 +174,12 @@ int main(int argc, char **argv) {
         {"--embeddings-binary"},
         {"--embeddings-binary", "-c", "-o", (test_directory() / "output").string()},
         {"--embeddings-binary", "--bench", "-o", (test_directory() / "output").string()},
+        {"--preprocess", "bogus"},
+        {"--max-tokens", "12abc"},
+        {"--max-tokens", "-1"},
+        {"--no-resize", "--preprocess", "hf"},
+        {"-c", "--preprocess", "hf"},
+        {"-c", "--no-resize"},
     };
     for (const auto &args : cases) {
         std::string stdout_output;
@@ -250,6 +257,58 @@ int main(int argc, char **argv) {
     if (topk_status != 1 || !topk_stdout.empty() ||
         topk_stderr.find("cannot exceed the model's 2 classes") == std::string::npos) {
         return 1;
+    }
+
+    // --max-tokens 1 must reject any real input after model load, before
+    // graph construction, with a clean stderr message and exit 1.
+    const std::string cap_model = (test_directory() / "cap.gguf").string();
+    if (!write_minimal_gguf(cap_model, false, 4, 1, 1, false, true)) {
+        return 1;
+    }
+    std::string cap_stdout;
+    std::string cap_stderr;
+    const int   cap_status =
+        run_cli(cli, {"-m", cap_model, "-i", "../assets/tench.jpg", "--print-embeddings", "--max-tokens", "1"},
+                cap_stdout, cap_stderr);
+    std::remove(cap_model.c_str());
+    if (cap_status != 1 || !cap_stdout.empty() ||
+        cap_stderr.find("patch tokens after preprocessing (limit 1)") == std::string::npos ||
+        cap_stderr.find("assert") != std::string::npos) {
+        return 1;
+    }
+
+    // Record contract: when the real small GGUF is present, a two-input
+    // --print-embeddings run must emit one JSONL record per input, in input
+    // order, with index/grid/n_patches consistent. Skip silently otherwise.
+    const std::string small_model = "../models/dinov2-small/model.gguf";
+    if (std::filesystem::exists(small_model)) {
+        std::string jsonl_out;
+        std::string jsonl_err;
+        const int   jsonl_status = run_cli(
+            cli, {"-m", small_model, "-i", "../assets/tench.jpg", "-i", "../assets/tench.jpg", "--print-embeddings"},
+            jsonl_out, jsonl_err);
+        if (jsonl_status != 0) {
+            return 1;
+        }
+        // tench is 612x408; aligned dims 616x420 -> 44x30 grid, 1320 patches
+        std::istringstream lines(jsonl_out);
+        std::string        line;
+        size_t             n = 0;
+        while (std::getline(lines, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            const std::string index_key = "\"index\":" + std::to_string(n);
+            if (line.find(index_key) == std::string::npos || line.find("\"n_patches\":1320") == std::string::npos ||
+                line.find("\"grid\":{\"h\":30,\"w\":44}") == std::string::npos ||
+                line.find("\"image\":\"../assets/tench.jpg\"") == std::string::npos) {
+                return 1;
+            }
+            ++n;
+        }
+        if (n != 2) {
+            return 1;
+        }
     }
 
     std::string stdout_output;

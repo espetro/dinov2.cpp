@@ -3,8 +3,8 @@
 ## Scope and provenance
 
 * Date: 2026-09-21
-* Recorded CLI/model/parity run code state: `e04b70e0a16b6efb2a6e485eac6af4ae22878643`
-* CLI version: `dinov2-cli 0.3.0`
+* Recorded CLI/model/parity run code state: `482ea51ad79412c6f7df6d6c538a983345302004`
+* CLI version: `dinov2-cli 0.4.0`
 * HF reference: local `/tmp/dinov2-final-work/hf/dinov2-with-registers-small-imagenet1k-1-layer` downloaded from `facebook/dinov2-with-registers-small-imagenet1k-1-layer`
 * GGUF path used: `/tmp/dinov2-final-work/out/dinov2-with-registers-small-imagenet1k-1-layer/ggml-model.gguf` converted at this SHA
 * GGUF SHA256: `8a78711f45b218dd213ca1cc76d1c6089ba21bbfe055be397d00eaf30db9ad82`

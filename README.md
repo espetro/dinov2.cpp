@@ -58,9 +58,17 @@ hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 
 Emits `cls`/`pooled` vectors on stdout as one JSON object.
 
+Feature mode bounds the input's shortest edge to 518 px by default
+(`--preprocess bounded`) so attention memory stays predictable on large
+images; `--preprocess hf` mirrors the HF `AutoImageProcessor` recipe
+(256 shortest edge + 224 center crop) for like-for-like comparisons, and
+`--preprocess crop518` fixes every input at 518x518 for batching mixed
+aspect ratios. `--no-resize` keeps native resolution, and `--max-tokens N`
+caps the patch-token count per image (default `4*(518/patch)^2`).
+
 **Preview binary embeddings:** for high-throughput consumers, use
 `--embeddings-binary -o output.d2e`. This deliberately unstable preview writes
-an explicit 32-byte little-endian header followed by float32 `cls`, `pooled`,
+an explicit 40-byte little-endian header followed by float32 `cls`, `pooled`,
 and optional row-major patch vectors. It writes no binary bytes to stdout.
 With multiple inputs, `-o` is a directory containing indexed `.d2e` files.
 The format may change without compatibility guarantees and is not a standard.

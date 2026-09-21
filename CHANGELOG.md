@@ -13,6 +13,35 @@ Hand-edit only the lines **above** the `<!-- git-cliff: end of header -->`
 marker; everything below is regenerated.
 
 <!-- git-cliff: end of header -->
+## [Unreleased]
+
+### Changed
+- Feature-mode preprocessing now bounds the shortest edge to 518 px by
+  default (`--preprocess bounded`) and aligns dimensions by true ceil to
+  patch multiples (a dimension already at a multiple is unchanged).
+  `--no-resize` restores native resolution, still subject to
+  `--max-tokens`.
+- The embeddings JSON record gains `index` (0-based input order) and
+  `grid` (`{"h","w"}` patch-grid dims); `patches` stays flat row-major
+  `h*w*hidden`.
+- The D2EMB preview header is version 2, 40 bytes, adding `grid_w` and
+  `grid_h` fields. The format remains intentionally unstable.
+- Version bumped to 0.4.0 (`--version` reports `dinov2-cli 0.4.0`).
+
+### Added
+- `--preprocess {bounded,hf,crop518}` feature-mode selector: `hf`
+  mirrors the HF AutoImageProcessor recipe (256 + 224 crop); `crop518`
+  gives a fixed 518x518 grid for batching mixed aspect ratios.
+- `--max-tokens N` hard cap on patch tokens per image (default
+  `4*(518/patch)^2`, 0 disables), enforced before graph construction.
+- `scripts/check_jsonl_contract.py`: stdlib validator for the JSONL
+  record contract.
+
+### Fixed
+- Graph and model buffer allocation failures now print a diagnostic and
+  exit 1 instead of aborting (e.g. the ~222 GB Metal request from a
+  3440x5601 feature-mode input).
+
 ## [0.3.0] - 2026-09-18
 
 ### Changed

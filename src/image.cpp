@@ -131,13 +131,58 @@ Image resize_bicubic(const Image &src, int w, int h) {
     return dst;
 }
 
+Image resize_shortest_edge(const Image &src, int short_edge) {
+    const float scale = (float)short_edge / (float)std::min(src.nx, src.ny);
+    const int   new_w = std::max((int)std::lround(src.nx * scale), 1);
+    const int   new_h = std::max((int)std::lround(src.ny * scale), 1);
+    return resize_bicubic(src, new_w, new_h);
+}
+
+ImageF preprocess_resize_crop(const Image &src, int short_edge, int crop) {
+    ImageF out;
+    if (src.data.empty() || crop > short_edge) {
+        return out;
+    }
+    // 1) shortest-edge resize preserving aspect ratio (HF BitImageProcessor
+    //    parity)
+    Image image = resize_shortest_edge(src, short_edge);
+
+    // clamp >= 0 for safety (min dimension is short_edge >= crop for the
+    // recipes used here)
+    const int offset_w = std::max((image.nx - crop) / 2, 0);
+    const int offset_h = std::max((image.ny - crop) / 2, 0);
+
+    // 2) center crop
+    Image cropped;
+    cropped.nx = crop;
+    cropped.ny = crop;
+    cropped.c  = 3;
+    cropped.data.resize((size_t)crop * crop * 3);
+    for (int y = 0; y < crop; ++y) {
+        const uint8_t *src_row = &image.data[((size_t)(offset_h + y) * image.nx + offset_w) * 3];
+        std::memcpy(&cropped.data[(size_t)y * crop * 3], src_row, (size_t)crop * 3);
+    }
+
+    // 3) convert to float, scale to [0,1] and channel-wise standardization (RGB)
+    out.nx = crop;
+    out.ny = crop;
+    out.c  = 3;
+    out.data.resize((size_t)crop * crop * 3);
+    for (size_t i = 0; i < cropped.data.size(); i += 3) {
+        out.data[i + 0] = (cropped.data[i + 0] / 255.0f - IMAGENET_DEFAULT_MEAN[0]) / IMAGENET_DEFAULT_STD[0];
+        out.data[i + 1] = (cropped.data[i + 1] / 255.0f - IMAGENET_DEFAULT_MEAN[1]) / IMAGENET_DEFAULT_STD[1];
+        out.data[i + 2] = (cropped.data[i + 2] / 255.0f - IMAGENET_DEFAULT_MEAN[2]) / IMAGENET_DEFAULT_STD[2];
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // DINOv2 preprocessing
 // ---------------------------------------------------------------------------
 
-ImageF preprocess_for_dinov2(const Image &src, int target_size) {
+ImageF preprocess_resize_normalized(const Image &src, int w, int h) {
     ImageF out;
-    if (src.data.empty()) {
+    if (src.data.empty() || w <= 0 || h <= 0) {
         return out;
     }
     // convert to float in [0, 1]
@@ -146,20 +191,12 @@ ImageF preprocess_for_dinov2(const Image &src, int target_size) {
         fsrc[i] = src.data[i] / 255.0f;
     }
 
-    // upscale so the size is a multiple of target_size (mirrors the original
-    // cv::resize to ((dim / patch + 1) * patch) behavior with patch =
-    // target_size / n_img_embd; here we simply resize so the short side equals
-    // the next multiple of target_size above the current dimension)
-    auto      mult  = [](int v, int t) { return ((v / t) + 1) * t; };
-    const int new_w = mult(src.nx, target_size);
-    const int new_h = mult(src.ny, target_size);
+    std::vector<float> resized = resize_planes(fsrc.data(), src.nx, src.ny, w, h, 3);
 
-    std::vector<float> resized = resize_planes(fsrc.data(), src.nx, src.ny, new_w, new_h, 3);
-
-    out.nx = new_w;
-    out.ny = new_h;
+    out.nx = w;
+    out.ny = h;
     out.c  = 3;
-    out.data.resize((size_t)new_w * new_h * 3);
+    out.data.resize((size_t)w * h * 3);
     for (size_t i = 0; i < out.data.size(); i += 3) {
         // RGB channel order (stb gives RGB), ImageNet normalization
         out.data[i + 0] = (resized[i + 0] - IMAGENET_DEFAULT_MEAN[0]) / IMAGENET_DEFAULT_STD[0];
@@ -167,6 +204,13 @@ ImageF preprocess_for_dinov2(const Image &src, int target_size) {
         out.data[i + 2] = (resized[i + 2] - IMAGENET_DEFAULT_MEAN[2]) / IMAGENET_DEFAULT_STD[2];
     }
     return out;
+}
+
+ImageF preprocess_for_dinov2(const Image &src, int target_size) {
+    // resize each dimension up to the next multiple of target_size (true
+    // ceil: a dimension already at a multiple is unchanged)
+    auto mult = [](int v, int t) { return ((v + t - 1) / t) * t; };
+    return preprocess_resize_normalized(src, mult(src.nx, target_size), mult(src.ny, target_size));
 }
 
 // ---------------------------------------------------------------------------

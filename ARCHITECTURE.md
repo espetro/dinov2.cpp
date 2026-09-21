@@ -22,7 +22,7 @@ graph TD
     A["dinov2-cli (dinov2-cli.cpp)<br/>CLI shell: argv parsing, image load,<br/>graph build, output formatting"]
     B["dinov2.h<br/>public API: structs, signatures,<br/>IMAGENET defaults"]
     C["dinov2.cpp<br/>encoder graph:<br/>attn, mlp, swiglu_ffn, build_graph,<br/>dino_predict"]
-    D["src/image.h + src/image.cpp<br/>stb wrappers: load_image,<br/>dino_preprocess, dino_classify_preprocess"]
+    D["src/image.h + src/image.cpp<br/>stb wrappers: load_image,<br/>dino_preprocess, dino_classify_preprocess,<br/>preprocess_resize_crop (bounded/hf/crop518)"]
     E["ggml/ submodule<br/>tensor library + CPU backend"]
 
     A --> B
@@ -87,7 +87,7 @@ Abridged table:
 | Path | Role | One-line purpose |
 |:-----|:-----|:-----------------|
 | `dinov2.h`, `dinov2.cpp` | Core | Public API + encoder graph. |
-| `src/image.{h,cpp}` | Library | stb-backed image load + `dino_preprocess`. |
+| `src/image.{h,cpp}` | Library | stb-backed image load + `dino_preprocess` / feature-mode `--preprocess` recipes (bounded 518 bound, hf, crop518). |
 | `dinov2-cli.cpp` | CLI | `main`: arg parsing + bench loop. |
 | `tests/test_{image,dinov2}.cpp` | Test | doctest pure-function coverage. |
 | `scripts/{bench.sh,dinov2-to-gguf.py,publish-gguf.sh}` | Tool | Bench sweep + PyTorch→GGUF + HF upload. |

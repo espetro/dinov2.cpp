@@ -97,47 +97,15 @@ void l2_normalize(std::vector<float> &v) {
 }
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params) {
-    // 1) shortest-edge resize preserving aspect ratio (HF BitImageProcessor
-    //    parity): scale so the shorter side becomes 256.
-    constexpr int short_edge = 256;
-    const float   scale      = (float)short_edge / (float)std::min(img.nx, img.ny);
-    const int     new_w      = std::max((int)std::lround(img.nx * scale), 1);
-    const int     new_h      = std::max((int)std::lround(img.ny * scale), 1);
-    Image         image      = resize_bicubic(img, new_w, new_h);
-
-    constexpr int crop_size = 224;
-    // clamp >= 0 for safety (min dimension is 256 > 224 by construction)
-    const int offset_w = std::max((image.nx - crop_size) / 2, 0);
-    const int offset_h = std::max((image.ny - crop_size) / 2, 0);
-
-    // 2) center crop
-    Image cropped;
-    cropped.nx = crop_size;
-    cropped.ny = crop_size;
-    cropped.c  = 3;
-    cropped.data.resize((size_t)crop_size * crop_size * 3);
-    for (int y = 0; y < crop_size; ++y) {
-        const uint8_t *src_row = &image.data[((size_t)(offset_h + y) * image.nx + offset_w) * 3];
-        std::memcpy(&cropped.data[(size_t)y * crop_size * 3], src_row, (size_t)crop_size * 3);
-    }
-
-    // 3) convert to float, scale to [0,1] and channel-wise standardization (RGB)
-    ImageF out;
-    out.nx = crop_size;
-    out.ny = crop_size;
-    out.c  = 3;
-    out.data.resize((size_t)crop_size * crop_size * 3);
-    for (size_t i = 0; i < cropped.data.size(); i += 3) {
-        out.data[i + 0] = (cropped.data[i + 0] / 255.0f - IMAGENET_DEFAULT_MEAN[0]) / IMAGENET_DEFAULT_STD[0];
-        out.data[i + 1] = (cropped.data[i + 1] / 255.0f - IMAGENET_DEFAULT_MEAN[1]) / IMAGENET_DEFAULT_STD[1];
-        out.data[i + 2] = (cropped.data[i + 2] / 255.0f - IMAGENET_DEFAULT_MEAN[2]) / IMAGENET_DEFAULT_STD[2];
-    }
-    return out;
+    (void)params;
+    // HF BitImageProcessor recipe: shortest-edge 256 + center crop 224.
+    return preprocess_resize_crop(img, 256, 224);
 }
 
 ImageF dino_preprocess(const Image &img, const dino_hparams &params) {
-    const auto new_w = (img.nx / params.patch_size + 1) * params.patch_size;
-    const auto new_h = (img.ny / params.patch_size + 1) * params.patch_size;
+    const auto patch = static_cast<int>(params.patch_size);
+    const auto new_w = ((img.nx + patch - 1) / patch) * patch;
+    const auto new_h = ((img.ny + patch - 1) / patch) * patch;
 
     // 1) resize bicubic and 2) scale to [0,1] + channel-wise standardization (RGB)
     ImageF image = preprocess_for_dinov2(img, params.patch_size);
@@ -155,6 +123,44 @@ ImageF dino_preprocess(const Image &img, const dino_hparams &params) {
         }
     }
     return image;
+}
+
+ImageF dino_feature_preprocess(const Image &img, const dino_hparams &hparams, const dino_params &params) {
+    switch (params.preprocess_mode) {
+    case dino_preprocess_mode::hf:
+        // same HF recipe as classification: shortest edge 256, center crop 224
+        return preprocess_resize_crop(img, 256, 224);
+    case dino_preprocess_mode::crop518:
+        // fixed 518x518 grid; every input shares dims, so batches always match
+        return preprocess_resize_crop(img, 518, 518);
+    case dino_preprocess_mode::bounded:
+    default: {
+        // one bicubic resample straight to the bounded, patch-aligned dims
+        const ImgSize target = dino_feature_output_size(img, hparams, params);
+        return preprocess_resize_normalized(img, target.width, target.height);
+    }
+    }
+}
+
+ImgSize dino_feature_output_size(const Image &img, const dino_hparams &hparams, const dino_params &params) {
+    switch (params.preprocess_mode) {
+    case dino_preprocess_mode::hf:
+        return {224, 224};
+    case dino_preprocess_mode::crop518:
+        return {518, 518};
+    case dino_preprocess_mode::bounded:
+    default: {
+        int nx = img.nx;
+        int ny = img.ny;
+        if (!params.no_resize && std::min(nx, ny) > DINO_FEATURE_SHORT_EDGE) {
+            const float scale = (float)DINO_FEATURE_SHORT_EDGE / (float)std::min(nx, ny);
+            nx                = std::max((int)std::lround(nx * scale), 1);
+            ny                = std::max((int)std::lround(ny * scale), 1);
+        }
+        const int p = (int)hparams.patch_size;
+        return {((nx + p - 1) / p) * p, ((ny + p - 1) / p) * p};
+    }
+    }
 }
 
 std::vector<float> interpolate_pos_embed(const ImgSize       img_size,
@@ -354,8 +360,9 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
 
     // std::cout << "patch size " << hparams.patch_size << std::endl;
 
-    const int new_w = (img_size.width / model.hparams.patch_size + 1) * model.hparams.patch_size;
-    const int new_h = (img_size.height / model.hparams.patch_size + 1) * model.hparams.patch_size;
+    const int p     = (int)model.hparams.patch_size;
+    const int new_w = ((img_size.width + p - 1) / p) * p;
+    const int new_h = ((img_size.height + p - 1) / p) * p;
 
     const int h0                = new_h / hparams.patch_size;
     const int w0                = new_w / hparams.patch_size;
@@ -382,6 +389,10 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     gguf_free(gguf_ctx);
 
     model.buffer = ggml_backend_alloc_ctx_tensors(model.ctx, model.backend);
+    if (!model.buffer) {
+        fprintf(stderr, "%s: failed to allocate model buffer on the backend\n", __func__);
+        return false;
+    }
     // copy tensors from main memory to backend
     for (struct ggml_tensor *cur = ggml_get_first_tensor(model.ctx); cur != nullptr;
          cur                     = ggml_get_next_tensor(model.ctx, cur)) {
@@ -752,7 +763,8 @@ bool dino_batch_size_valid(int64_t n) {
 }
 
 bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
-                             uint32_t patch_count, bool include_patches, bool normalized, std::string &error) {
+                             uint32_t patch_count, uint32_t grid_w, uint32_t grid_h, bool include_patches,
+                             bool normalized, std::string &error) {
     if (!output.cls_token || output.cls_token->size() != hidden_size) {
         error = "CLS vector has an unexpected length";
         return false;
@@ -794,13 +806,15 @@ bool write_embeddings_binary(const std::string &path, const dino_output &output,
 
     const char magic[8] = {'D', '2', 'E', 'M', 'B', '\0', '\0', '\0'};
     file.write(magic, sizeof(magic));
-    write_u16(1);
-    write_u16(32);
+    write_u16(2);
+    write_u16(40);
     write_u32(hidden_size);
     write_u32(2 * hidden_size);
     write_u32(include_patches ? patch_count : 0);
     write_u32(flags);
     write_u32(0);
+    write_u32(include_patches ? grid_w : 0);
+    write_u32(include_patches ? grid_h : 0);
 
     for (float value : *output.cls_token) {
         write_float(value);
@@ -847,6 +861,16 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "  -s N, --seed          signed 32-bit RNG seed (default: %d)\n", params.seed);
     fprintf(out, "  --batch N             max images per forward pass; inputs run in chunks of N\n");
     fprintf(out, "                        (default: %d, max: %d)\n", params.n_batch, DINO_MAX_BATCH);
+    fprintf(out, "\n");
+    fprintf(out, "Preprocessing (feature mode only; rejected with -c):\n");
+    fprintf(out, "  --preprocess MODE     bounded (default): resize shortest edge to %d when larger;\n",
+            DINO_FEATURE_SHORT_EDGE);
+    fprintf(out, "                        hf: shortest edge 256 + center crop 224 (HF recipe);\n");
+    fprintf(out, "                        crop518: shortest edge 518 + center crop 518 (fixed 37x37 grid)\n");
+    fprintf(out, "  --no-resize           bounded mode: keep native resolution (still capped)\n");
+    fprintf(out, "  --max-tokens N        hard cap on patch tokens per image, 0 disables\n");
+    fprintf(out, "                        (default: 4 * (%d/patch)^2 from the model's patch size)\n",
+            DINO_FEATURE_SHORT_EDGE);
     fprintf(out, "\n");
     fprintf(out, "Output modes:\n");
     fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
@@ -946,7 +970,8 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
     };
 
     // the first -i replaces the default image; later -i flags append
-    bool first_inp = true;
+    bool first_inp      = true;
+    bool preprocess_set = false;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -1024,6 +1049,30 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             params.print_patch_tokens = true;
         } else if (arg == "--l2-normalize") {
             params.l2_normalize = true;
+        } else if (arg == "--preprocess") {
+            const std::string value = next_value(i);
+            if (value == "bounded") {
+                params.preprocess_mode = dino_preprocess_mode::bounded;
+            } else if (value == "hf") {
+                params.preprocess_mode = dino_preprocess_mode::hf;
+            } else if (value == "crop518") {
+                params.preprocess_mode = dino_preprocess_mode::crop518;
+            } else {
+                fprintf(stderr, "error: %s has invalid value '%s' (expected one of: bounded, hf, crop518)\n",
+                        arg.c_str(), value.c_str());
+                print_usage(stderr, argc, argv, params);
+                exit(1);
+            }
+            preprocess_set = true;
+        } else if (arg == "--no-resize") {
+            params.no_resize = true;
+        } else if (arg == "--max-tokens") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed < 0) {
+                numeric_parse_error(arg.c_str(), value, "a non-negative 32-bit integer", argc, argv, params);
+            }
+            params.max_tokens = parsed;
         } else if (arg == "--version") {
             fprintf(stdout, "dinov2-cli %s\n", DINOV2_VERSION);
             exit(0);
@@ -1049,6 +1098,16 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
     }
     if (params.embeddings_binary && params.bench_repeats != 0) {
         fprintf(stderr, "error: --embeddings-binary cannot be combined with --bench\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.no_resize && params.preprocess_mode != dino_preprocess_mode::bounded) {
+        fprintf(stderr, "error: --no-resize only applies to --preprocess bounded\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.classify && (preprocess_set || params.no_resize)) {
+        fprintf(stderr, "error: --preprocess/--no-resize are feature-mode flags and cannot be combined with -c\n");
         print_usage(stderr, argc, argv, params);
         exit(1);
     }
@@ -1094,7 +1153,14 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     struct ggml_context *ctx_cgraph = ggml_init(params0);
     struct ggml_cgraph  *gf         = build_graph({nx, ny}, ctx_cgraph, model, batch_params);
 
-    ggml_gallocr_alloc_graph(allocr, gf);
+    if (!ggml_gallocr_alloc_graph(allocr, gf)) {
+        fprintf(stderr,
+                "%s: failed to allocate compute graph for a %d x %d input (%d patch tokens); "
+                "reduce input size or use --preprocess crop518 / --max-tokens\n",
+                __func__, nx, ny, num_patches);
+        ggml_free(ctx_cgraph);
+        return {};
+    }
 
     struct ggml_tensor *input = ggml_graph_get_tensor(gf, "input");
 
