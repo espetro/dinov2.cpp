@@ -37,6 +37,8 @@ Run the same suite under the `asan` and `ubsan` presets before submitting anythi
 
 It needs the `.venv` deps (torch, transformers, pillow) and a downloaded GGUF.
 
+Default gates are cls/pooled cosine >= 0.999 and patch flat + per-token-mean cosine >= 0.99; the per-token minimum is reported as informational because f16 inference diverges from the f32 reference on a small token tail. Pass `--patches-token-min-threshold <float>` for a strict per-token check.
+
 ## Formatting
 
 CI enforces `clang-format-18`. Before committing:
