@@ -75,6 +75,8 @@ The README's ready-to-download GGUFs live at `dinov2-cpp-core/<variant>-gguf` on
 | large (registers) | [facebook/dinov2-with-registers-large-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-large-imagenet1k-1-layer) | **Recommended for patch/dense features** |
 | giant (registers) | [facebook/dinov2-with-registers-giant-imagenet1k-1-layer](https://huggingface.co/facebook/dinov2-with-registers-giant-imagenet1k-1-layer) | **Recommended for patch/dense features** |
 
+The converter also accepts the backbone-only names `facebook/dinov2-{small,base,large,giant}` and `facebook/dinov2-with-registers-{small,base,large,giant}`. These produce feature-only GGUFs and do not invent ImageNet classifier heads or labels.
+
 For the bounded rationale, see [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588) and the official [DINOv2 results](https://github.com/facebookresearch/dinov2/blob/main/README.md). Register-token checkpoints are recommended for patch and dense feature workflows, while no-register checkpoints remain useful for exact baseline reproduction and task-specific comparisons.
 
 ```bash
