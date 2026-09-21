@@ -3,7 +3,8 @@
 ## Scope and provenance
 
 * Date: 2026-09-21
-* Repository SHA at run: `dd33647e3fd42686d48dcbbaae298fdb4ca6b3fb`
+* Recorded CLI/model run code state: `dd33647e3fd42686d48dcbbaae298fdb4ca6b3fb`
+* Parity parser code state: `a9e41e6`
 * CLI version: `dinov2-cli 0.3.0`
 * HF reference: `facebook/dinov2-small-imagenet1k-1-layer`
 * GGUF path used: `models/dinov2-small/model.gguf`
@@ -11,7 +12,7 @@
 * Image: `assets/tench.jpg`
 * Environment: Darwin 25.6.0, Apple arm64, MacBookPro17,1, Apple M1, Metal backend, 8 CPUs
 
-The checksum identifies the exact GGUF file used for this run. The model weights and build artifacts remain local and are not part of this evidence change.
+The checksum identifies the exact GGUF file used for this run. The recorded CLI/model output was produced from the `dd33647e3fd42686d48dcbbaae298fdb4ca6b3fb` code state and was processed with the current JSONL parser from `a9e41e6`. This is not a claim that the older code state alone can reproduce the current classify parsing. The model weights and build artifacts remain local and are not part of this evidence change.
 
 ## Command and gates
 

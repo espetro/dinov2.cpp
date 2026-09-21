@@ -2,6 +2,20 @@
 
 These artifacts record actual runs of `scripts/parity_check.py` against the matching Hugging Face reference and GGUF files. They are CPU or Metal and environment specific measurements, not universal guarantees.
 
+## Download the recorded GGUFs
+
+From the repository root, download both public Hugging Face GGUF artifacts into the paths used by the recorded commands:
+
+```sh
+huggingface-cli download dinov2-cpp-core/dinov2-small-gguf model.gguf \
+  --local-dir models/dinov2-small
+
+huggingface-cli download dinov2-cpp-core/dinov2-with-registers-small-gguf model.gguf \
+  --local-dir models/dinov2-with-registers-small
+```
+
+The model weights are gitignored (`/models` and `*.gguf`) and are not committed.
+
 ## Reproduce
 
 From the repository root, use the existing Python environment and a built CLI. The commands below retain the default parity gates explicitly:
