@@ -36,10 +36,18 @@ ARCH: Final[str] = "dinov2"
 def _is_dinov2_backbone(module: object) -> bool:
     """Return whether an object has the Transformers DINOv2 backbone shape."""
     encoder = getattr(module, "encoder", None)
-    return (
-        getattr(module, "embeddings", None) is not None
-        and getattr(encoder, "layer", None) is not None
-    )
+    if (
+        getattr(module, "embeddings", None) is None
+        or getattr(encoder, "layer", None) is None
+    ):
+        return False
+
+    config = getattr(module, "config", None)
+    model_type = getattr(config, "model_type", None)
+    return model_type is None or str(model_type).lower() in {
+        "dinov2",
+        "dinov2_with_registers",
+    }
 
 
 def resolve_dinov2_backbone(model: object) -> object:
@@ -69,11 +77,13 @@ def resolve_dinov2_backbone(model: object) -> object:
         else:
             # This also keeps the resolver straightforward to unit test with a
             # small synthetic wrapper without constructing a Transformers model.
-            pending.extend(
-                value
-                for value in vars(module).values()
-                if hasattr(value, "__dict__")
-            )
+            # Some malformed or slot-only objects do not support vars(); they
+            # are leaves in this best-effort traversal, not resolver errors.
+            try:
+                values = vars(module).values()
+            except TypeError:
+                continue
+            pending.extend(value for value in values if hasattr(value, "__dict__"))
 
     raise AttributeError(
         "Could not locate a DINOv2 backbone with embeddings and encoder.layer"

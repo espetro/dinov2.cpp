@@ -38,6 +38,23 @@ class ConverterResolutionTest(unittest.TestCase):
         with self.assertRaisesRegex(AttributeError, "embeddings and encoder.layer"):
             self.converter.resolve_dinov2_backbone(torch.nn.Linear(1, 1))
 
+    def test_rejects_generic_vit_shape_with_non_dinov2_config(self) -> None:
+        backbone = self._Backbone()
+        backbone.config = self._Config("vit")
+        with self.assertRaisesRegex(AttributeError, "embeddings and encoder.layer"):
+            self.converter.resolve_dinov2_backbone(backbone)
+
+    def test_ignores_objects_without_a_dict(self) -> None:
+        with self.assertRaisesRegex(AttributeError, "embeddings and encoder.layer"):
+            self.converter.resolve_dinov2_backbone(self._SlotOnly())
+
+    class _Config:
+        def __init__(self, model_type: str) -> None:
+            self.model_type = model_type
+
+    class _SlotOnly:
+        __slots__ = ()
+
     class _Encoder(_TorchModule):
         def __init__(self) -> None:
             super().__init__()
