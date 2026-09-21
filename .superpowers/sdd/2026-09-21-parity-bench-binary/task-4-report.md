@@ -70,3 +70,61 @@ No models, build outputs, or release artifacts were added to the repository.
 ## Fix note
 
 The benchmark workflow now uses the supported `hf download` command from the already-installed `huggingface_hub[cli]` package. The repository, local directory, and `model.gguf` arguments are unchanged; no benchmark semantics or inputs were changed.
+
+## Complete rerun result: 2026-09-21
+
+### Status
+
+Blocked. The corrected workflow reached the benchmark binary on Ubuntu, and the binary emitted valid JSON metrics, but `scripts/bench.sh` failed to parse that JSON. No artifact was uploaded. Placeholder benchmark data remains unchanged, and no local Mac timings were substituted.
+
+### Provenance
+
+- Branch pushed: `feat/batched-inference`
+- Pushed SHA: `b0359a589187b89139f75b1eca8e16966ba33530`
+- Workflow: `.github/workflows/bench.yml`
+- Runner: `ubuntu-latest`
+- Dispatch command: `gh workflow run bench.yml --ref feat/batched-inference -f variant=small -f repeats=5 -f threads=2`
+- Run: [35629370840](https://github.com/espetro/dinov2.cpp/actions/runs/35629370840)
+- Run head SHA: `b0359a589187b89139f75b1eca8e16966ba33530`
+- Inputs: `variant=small`, `repeats=5`, `threads=2`
+- Result: failed after approximately 58 seconds in `Run benchmarks`
+- Artifact: none. `Upload benchmark results` was skipped.
+
+### Exact failure log
+
+From `gh run view 35629370840 --log-failed`:
+
+```text
+models selected: small
+repeats: 5
+threads: 2
+bench.sh: running dinov2-vit-small-patch14 repeats=5 threads=2...
+::error::could not parse bench output for dinov2-vit-small-patch14
+{"model":"dinov2-vit-small-patch14","n_threads":2,"n_repeats":5,"n_warmup":1,"samples_ms":[207,214,209,206,207],"mean_ms":208.6,"stddev_ms":3.2,"min_ms":206,"max_ms":214,"peak_rss_mb":104,"n_images":1,"batch":1,"ms_per_image":208.6,"images_per_sec":4.8}
+##[error]Process completed with exit code 1.
+```
+
+The workflow successfully completed checkout, tool installation, configuration, build, variant resolution, HF download, and staged-weight verification. It failed after the binary produced the JSON shown above, before writing/uploading `benchmark_results.txt`.
+
+### Measurement assessment
+
+The JSON contains an Ubuntu small-model measurement candidate: mean `208.6 ms`, standard deviation `3.2 ms`, minimum `206 ms`, maximum `214 ms`, peak RSS `104 MB`, `5` timed samples, `1` warmup, `2` threads, batch `1`, and `4.8` images/sec. It is not committed as benchmark evidence because the workflow did not complete successfully and did not produce its required artifact. The exact parser blocker must be fixed and the run rerun before evidence is ready for review.
+
+Multi-platform evidence remains deferred. No giant or all-model sweep was attempted.
+
+### Repository outcome
+
+- `benchmark_results.txt`: unchanged placeholder content.
+- `docs/benchmarks.md`: unchanged placeholder documentation.
+- This report: appended with the complete rerun provenance and failure output.
+- Evidence ready for review: **No**, blocked on the `scripts/bench.sh` JSON parsing failure.
+
+### Parser root cause confirmation
+
+The parser is implemented at `scripts/bench.sh:163-169` as a Python f-string using escaped double quotes inside the f-string expression, for example `f"{data[\"mean_ms\"]:.1f}"`. Reproducing that exact expression with the run's JSON values locally produces:
+
+```text
+SyntaxError: unexpected character after line continuation character
+```
+
+Because stderr from the parser is redirected to `/dev/null`, the workflow surfaces only the generic `could not parse bench output` message and the valid JSON object. This identifies a parser implementation blocker, not a missing model or invalid benchmark output.
