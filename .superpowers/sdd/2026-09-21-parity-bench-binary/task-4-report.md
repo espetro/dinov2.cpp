@@ -132,3 +132,37 @@ Because stderr from the parser is redirected to `/dev/null`, the workflow surfac
 ## Parser fix: 2026-09-21
 
 Replaced the incompatible f-string expression in `scripts/bench.sh` with `str.format()` using the same five JSON fields and numeric format specifiers. This removes the escaped-quote syntax error without changing benchmark semantics or output format. Added `scripts/test-bench-parser.sh`, which validates the recorded JSON shape and confirms malformed JSON and missing required fields still fail.
+
+## Complete rerun result: 2026-09-21
+
+### Status
+
+Completed. The Ubuntu benchmark workflow succeeded, and the required artifact was downloaded and inspected. Placeholder benchmark evidence was replaced with the artifact's actual Ubuntu data. Multi-platform coverage remains deferred. No quantization-specific benchmark was run.
+
+### Provenance
+
+- Branch: `feat/batched-inference`
+- Branch SHA: `50d5dee10da4db7b7820082da7a3ea0eaab5f346`
+- Workflow: `.github/workflows/bench.yml`
+- Runner: `ubuntu-latest`, platform reported by artifact as `linux-x86_64`
+- Dispatch command: `gh workflow run bench.yml --ref feat/batched-inference -f variant=small -f repeats=5 -f threads=2`
+- Run: [35629935462](https://github.com/espetro/dinov2.cpp/actions/runs/35629935462)
+- Run head SHA: `50d5dee10da4db7b7820082da7a3ea0eaab5f346`
+- Artifact: `bench-results-small-35629935462/benchmark_results.txt`
+- Artifact generated: `2026-09-21T17:08:06Z`
+
+### Actual measurement
+
+The artifact reported the small f16 GGUF on the CPU backend with one warmup, five timed runs, one 224x224 image, batch 1, and two OpenMP threads:
+
+- Mean: `212.8 ms`
+- Standard deviation: `9.1 ms`
+- Minimum: `204 ms`
+- Maximum: `225 ms`
+- Peak RSS: `104 MB`
+
+### Repository outcome
+
+- `benchmark_results.txt`: replaced with the inspected artifact data plus explicit run and commit provenance.
+- `docs/benchmarks.md`: updated to report only the actual Ubuntu small-model measurement and deferred multi-platform coverage.
+- No models, build outputs, or release artifacts were added to the repository.
