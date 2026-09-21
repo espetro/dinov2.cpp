@@ -58,6 +58,14 @@ huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 
 Emits `cls`/`pooled` vectors on stdout as one JSON object.
 
+**Batch inference:** repeat `-i` (or comma-separate paths) and set `--batch`;
+each input gets one JSON line on stdout, identical to running it alone
+(see [docs/cli.md](docs/cli.md#batch-inference)):
+
+```bash
+./bin/dinov2-cli -m models/model.gguf -i a.jpg -i b.jpg --batch 2 --print-embeddings
+```
+
 That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
 
 ## Features
