@@ -224,10 +224,30 @@ int main(int argc, char **argv) {
     // preprocess every input; classify mode always yields 224x224 crops
     std::vector<ImageF> imgs_f;
     imgs_f.reserve(imgs.size());
-    for (const Image &img : imgs) {
-        ImageF img_f =
-            params.classify ? dino_classify_preprocess(img, model.hparams) : dino_preprocess(img, model.hparams);
-        fprintf(stderr, "%s: preprocessed image (%d x %d)\n", __func__, img_f.nx, img_f.ny);
+    const int64_t token_limit =
+        params.max_tokens >= 0 ? params.max_tokens : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
+    for (size_t i = 0; i < imgs.size(); ++i) {
+        const Image &img = imgs[i];
+        // hard cap on patch tokens, applied on the prospective preprocessed
+        // size so oversize inputs fail before the (expensive) resize and
+        // before any graph is constructed
+        if (token_limit > 0 && !params.classify) {
+            const ImgSize out_size  = dino_feature_output_size(img, model.hparams, params);
+            const int64_t n_patches = (int64_t)(out_size.height / (int)model.hparams.patch_size) *
+                                      (out_size.width / (int)model.hparams.patch_size);
+            if (n_patches > token_limit) {
+                fprintf(stderr,
+                        "error: image '%s' yields %lld patch tokens after preprocessing (limit %lld). "
+                        "Use a smaller input, --preprocess crop518, or raise --max-tokens.\n",
+                        params.fnames_inp[i].c_str(), (long long)n_patches, (long long)token_limit);
+                free_model();
+                return 1;
+            }
+        }
+        ImageF img_f = params.classify ? dino_classify_preprocess(img, model.hparams)
+                                       : dino_feature_preprocess(img, model.hparams, params);
+        fprintf(stderr, "%s: preprocessed image '%s' (%d x %d)\n", __func__, params.fnames_inp[i].c_str(), img_f.nx,
+                img_f.ny);
         imgs_f.push_back(std::move(img_f));
     }
     std::vector<Image>().swap(imgs);
@@ -268,7 +288,6 @@ int main(int argc, char **argv) {
     {
         ggml_backend_synchronize(model.backend);
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
-
         if (params.bench_repeats == 0) {
             // Single-shot path: run the inputs through dino_predict in chunks
             // of n_batch and emit per-image outputs in input order.

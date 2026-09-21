@@ -396,10 +396,10 @@ TEST_CASE("dino_preprocess: image smaller than patch triggers resize") {
 
 TEST_CASE("dino_preprocess: normalization formula across all channels") {
     Image img;
-    img.nx = 14;
-    img.ny = 14;
+    img.nx = 15;
+    img.ny = 15;
     img.c  = 3;
-    img.data.assign((size_t)14 * 14 * 3, 0);
+    img.data.assign((size_t)15 * 15 * 3, 0);
 
     // R plane 255, G 128, B 0.
     for (size_t i = 0; i < img.data.size(); i += 3) {
@@ -497,6 +497,159 @@ TEST_CASE("dino_classify_preprocess: wide input preserves aspect (shortest-edge 
             CHECK(out.data[i + c] == doctest::Approx(expect).epsilon(5e-2));
         }
     }
+}
+
+TEST_CASE("dino_preprocess: true ceil keeps patch-aligned dims unchanged") {
+    // Under true ceil a dimension already at a multiple of patch_size is
+    // unchanged: 518 -> 518 (37 patches), not 532 (38) as strict round-up did.
+    dino_hparams h;
+    h.img_size   = 224;
+    h.patch_size = 14;
+
+    Image img;
+    img.nx = 518;
+    img.ny = 518;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_preprocess(img, h);
+    CHECK(out.nx == 518);
+    CHECK(out.ny == 518);
+
+    Image img112;
+    img112.nx = 112;
+    img112.ny = 56;
+    img112.c  = 3;
+    img112.data.assign((size_t)112 * 56 * 3, 128);
+
+    const auto out112 = dino_preprocess(img112, h);
+    CHECK(out112.nx == 112);
+    CHECK(out112.ny == 56);
+}
+
+TEST_CASE("dino_feature_preprocess: bounded resizes shortest edge to 518") {
+    // 2000x800 -> shortest edge 518, aspect preserved: 800 -> 518,
+    // 2000 -> lround(2000 * 518/800) = 1295, then true-ceil to 1298.
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+
+    const int expected_w = ((int)std::lround(2000 * 518.0 / 800.0) + 13) / 14 * 14;
+    CHECK(out.ny == 518);
+    CHECK(out.nx == expected_w);
+    CHECK(out.nx % 14 == 0);
+    CHECK(out.ny % 14 == 0);
+    // bounded grid stays under the default cap (4 * 37 * 37 = 5476)
+    CHECK((int64_t)(out.ny / 14) * (out.nx / 14) <= (int64_t)dino_default_max_tokens(h.patch_size));
+}
+
+TEST_CASE("dino_feature_preprocess: bounded leaves images under the bound untouched") {
+    // 500x375: shortest edge <= 518, so only true-ceil alignment applies:
+    // 500 -> 504, 375 -> 378.
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+
+    Image img;
+    img.nx = 500;
+    img.ny = 375;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out    = dino_feature_preprocess(img, h, params);
+    const auto native = dino_preprocess(img, h);
+
+    CHECK(out.nx == 504);
+    CHECK(out.ny == 378);
+    CHECK(out.nx == native.nx);
+    CHECK(out.ny == native.ny);
+}
+
+TEST_CASE("dino_feature_preprocess: no_resize keeps native resolution") {
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+    params.no_resize = true;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+    // no bound: 2000 -> 2002, 800 -> 812 (true ceil to patch multiples)
+    CHECK(out.nx == ((2000 + 13) / 14) * 14);
+    CHECK(out.ny == ((800 + 13) / 14) * 14);
+}
+
+TEST_CASE("dino_feature_preprocess: hf yields 224x224") {
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+    params.preprocess_mode = dino_preprocess_mode::hf;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+    CHECK(out.nx == 224);
+    CHECK(out.ny == 224);
+}
+
+TEST_CASE("dino_feature_preprocess: crop518 yields a fixed 518x518 grid") {
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+    params.preprocess_mode = dino_preprocess_mode::crop518;
+
+    Image img;
+    img.nx = 2000;
+    img.ny = 800;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_feature_preprocess(img, h, params);
+    CHECK(out.nx == 518);
+    CHECK(out.ny == 518);
+    // different aspect, same output dims: batch-safe
+    img.nx = 800;
+    img.ny = 2000;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+    const auto out2 = dino_feature_preprocess(img, h, params);
+    CHECK(out2.nx == 518);
+    CHECK(out2.ny == 518);
+}
+
+TEST_CASE("dino_classify_preprocess: shared helper keeps 224x224 output") {
+    // classify and hf feature mode run the same (256, 224) recipe, so their
+    // outputs must be identical byte for byte.
+    dino_hparams h;
+    dino_params  params;
+    params.preprocess_mode = dino_preprocess_mode::hf;
+
+    Image img;
+    img.nx = 512;
+    img.ny = 128;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 200);
+
+    const auto cls = dino_classify_preprocess(img, h);
+    const auto hf  = dino_feature_preprocess(img, h, params);
+    CHECK(cls.nx == hf.nx);
+    CHECK(cls.ny == hf.ny);
+    CHECK(cls.data == hf.data);
 }
 
 TEST_CASE("binary embeddings preview writes little-endian header and payload") {

@@ -27,6 +27,14 @@ std::vector<float> resize_bicubic_f32(const float *src, int sw, int sh, int dw, 
 // Bicubic (Catmull-Rom, matching OpenCV INTER_CUBIC) resize of an 8-bit RGB image.
 Image resize_bicubic(const Image &src, int w, int h);
 
+// Bicubic resize so the shorter side equals short_edge, aspect ratio preserved
+// (dims via lround). Always resizes, up or down.
+Image resize_shortest_edge(const Image &src, int short_edge);
+
+// HF recipe: bicubic resize so the shorter side is short_edge, center crop to
+// crop x crop, scale to [0,1] and ImageNet mean/std normalization (RGB).
+ImageF preprocess_resize_crop(const Image &src, int short_edge, int crop);
+
 // Catmull-Rom bicubic kernel (support = 2). Exposed for unit tests.
 float cubic_kernel(float x);
 
@@ -34,8 +42,9 @@ float cubic_kernel(float x);
 // clamped edge handling. Exposed for unit tests.
 float sample_cubic(const float *src, int sw, int sh, int c, int channels, float fx, float fy);
 
-// DINOv2 preprocessing: resize to (target_size/patch+1)*patch-sized short side with
-// bicubic, scale to [0,1], ImageNet mean/std normalization.
+// DINOv2 preprocessing: resize each side up to the next multiple of
+// target_size (true ceil; aligned dims are unchanged) with bicubic, scale to
+// [0,1], ImageNet mean/std normalization.
 // c = 3, interleaved RGB float.
 ImageF preprocess_for_dinov2(const Image &src, int target_size);
 

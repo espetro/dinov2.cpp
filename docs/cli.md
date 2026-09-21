@@ -46,7 +46,7 @@ retrieval context, see the official [DINOv2 results](https://github.com/facebook
 
 ## Flags
 
-Adapted from `dinov2-cli --help` (v0.3.0); see `--help` for the exact
+Adapted from `dinov2-cli --help` (v0.4.0); see `--help` for the exact
 wording. Flags that take a value read it from the next argument.
 
 | Flag | Default | Effect |
@@ -57,6 +57,9 @@ wording. Flags that take a value read it from the next argument.
 | `-i FNAME`, `--inp` | `../assets/tench.jpg` | input image file; repeat or comma-separate for several |
 | `-s N`, `--seed` | 42 | RNG seed |
 | `--batch N` | 1 | max images per forward pass (max 64); inputs run in chunks of N |
+| `--preprocess MODE` | `bounded` | feature-mode preprocessing: `bounded` (shortest edge capped at 518), `hf` (shortest edge 256 + center crop 224), `crop518` (shortest edge 518 + center crop 518, fixed grid) |
+| `--no-resize` | off | keep native resolution under `--preprocess bounded` (still capped by `--max-tokens`) |
+| `--max-tokens N` | `4*(518/patch)^2` | hard cap on patch tokens per image after preprocessing; 0 disables |
 | `-c`, `--classify` | off | classify each input image and print top-k labels |
 | `-k N`, `--topk` | 5 | number of classes printed with `-c`; must not exceed the model's class count |
 | `--print-embeddings` | off | emit one JSON object for one input; one JSON object per line (JSONL) for multiple inputs |
@@ -69,7 +72,7 @@ wording. Flags that take a value read it from the next argument.
 | `--bench-warmup N` | 1 | warmup runs discarded before timing |
 | `--bench-json` | off | bench result as JSON on stdout |
 | `-h`, `--help` | | print usage and exit |
-| `--version` | | print `dinov2-cli 0.3.0` and exit |
+| `--version` | | print `dinov2-cli 0.4.0` and exit |
 
 ## Output modes
 
@@ -158,9 +161,12 @@ preprocessing. Chunks are formed in input order, so a mixed-size list
 works only when same-size images land in the same chunk (different
 chunks may differ). A chunk that mixes sizes aborts the run with an
 error naming the conflicting inputs. In classify mode every input is
-center-cropped to 224x224, so dims always match there; feature mode
-keeps each image's native size, which is where mixed inputs matter.
-When in doubt, group same-size inputs together or use `-c`.
+center-cropped to 224x224, so dims always match there. Feature mode
+bounds the shortest edge to 518 by default (`--preprocess bounded`),
+but different aspect ratios still produce different grids; use
+`--preprocess crop518` for a fixed 518x518 grid that always matches.
+When in doubt, group same-aspect-ratio inputs together, use
+`crop518`, or use `-c`.
 
 ## Embeddings JSON schema
 
@@ -395,10 +401,14 @@ hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 
 **`-c` always runs at 224x224**: classification follows the HF
 `preprocessor_config.json` recipe: resize so the shortest edge is 256
-(bicubic, aspect preserved), then center-crop 224x224. The GGUFs declare
-`img_size=518`, which applies to feature mode instead: there the input
-is resized up to a multiple of the patch size and position embeddings
-are interpolated, so arbitrary sizes work.
+(bicubic, aspect preserved), then center-crop 224x224. Feature mode
+instead bounds the shortest edge to 518 by default
+(`--preprocess bounded`), then aligns each dimension up to a multiple
+of the patch size and interpolates position embeddings, so arbitrary
+sizes work without unbounded memory. `--preprocess hf` applies the HF
+recipe (256 + 224 crop) for feature parity checks, `--preprocess
+crop518` fixes every input at 518x518, and `--no-resize` keeps native
+resolution subject to `--max-tokens`.
 
 **Preprocessing defaults**: ImageNet mean/std (0.485, 0.456, 0.406 /
 0.229, 0.224, 0.225), bicubic interpolation, RGB channel order. Matches
