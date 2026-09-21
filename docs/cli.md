@@ -12,7 +12,7 @@ Use a prebuilt binary from
 source:
 
 ```bash
-cmake --preset release && cmake --build build-release
+cmake --preset release && cmake --build --preset release
 # binary lands at ./build-release/bin/dinov2-cli
 ```
 
@@ -30,14 +30,14 @@ q4_0 through q8_0): point `-m` at whichever GGUF you have.
 
 ## Flags
 
-Verbatim from `dinov2-cli --help` (v0.3.0). Flags that take a value read
-it from the next argument.
+Adapted from `dinov2-cli --help` (v0.3.0); see `--help` for the exact
+wording. Flags that take a value read it from the next argument.
 
 | Flag | Default | Effect |
 |:-----|:--------|:-------|
 | `-m FNAME`, `--model` | `../model.gguf` | GGUF model path |
 | `-fa`, `--flash_attn` | off | enable flash attention, less accurate |
-| `-t N`, `--threads` | 4 | threads used during computation |
+| `-t N`, `--threads` | `min(4, hardware_concurrency)` | threads used during computation |
 | `-i FNAME`, `--inp` | `../assets/tench.jpg` | input image file |
 | `-s N`, `--seed` | 42 | RNG seed |
 | `-c`, `--classify` | off | classify the image and print top-k labels |
