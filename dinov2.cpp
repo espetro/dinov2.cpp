@@ -65,6 +65,14 @@ const char *get_val_str(const struct gguf_context *ctx, const char *key) {
     return gguf_get_val_str(ctx, key_id);
 }
 
+static std::optional<uint32_t> get_val_u32_optional(const struct gguf_context *ctx, const char *key) {
+    const int64_t key_id = gguf_find_key(ctx, key);
+    if (key_id < 0) {
+        return std::nullopt;
+    }
+    return gguf_get_val_u32(ctx, key_id);
+}
+
 //
 // Helpers
 //
@@ -256,10 +264,12 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     hparams.num_hidden_layers   = get_val_u32(gguf_ctx, std::string("num_hidden_layers").c_str());
     hparams.num_attention_heads = get_val_u32(gguf_ctx, std::string("num_attention_heads").c_str());
 
-    hparams.patch_size          = get_val_u32(gguf_ctx, std::string("patch_size").c_str());
-    hparams.img_size            = get_val_u32(gguf_ctx, std::string("img_size").c_str());
-    hparams.ftype               = get_val_u32(gguf_ctx, std::string("ftype").c_str());
-    hparams.num_register_tokens = get_val_u32(gguf_ctx, std::string("num_register_tokens").c_str());
+    hparams.patch_size = get_val_u32(gguf_ctx, std::string("patch_size").c_str());
+    hparams.img_size   = get_val_u32(gguf_ctx, std::string("img_size").c_str());
+    hparams.ftype      = get_val_u32(gguf_ctx, std::string("ftype").c_str());
+    // Backbone-only converters may omit this metadata because zero registers is
+    // the ordinary DINOv2 default. Keep loading feature mode in that case.
+    hparams.num_register_tokens = get_val_u32_optional(gguf_ctx, "num_register_tokens").value_or(0);
 
     const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
@@ -273,12 +283,38 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     fprintf(stderr, "%s: qntvr                  = %d\n", __func__, qntvr);
 
     if (params.classify) {
-        hparams.num_classes = get_val_u32(gguf_ctx, std::string("num_classes").c_str());
+        const auto num_classes = get_val_u32_optional(gguf_ctx, "num_classes");
+        if (!num_classes || *num_classes == 0) {
+            fprintf(stderr,
+                    "%s: classification requested but GGUF has no non-zero num_classes metadata; "
+                    "backbone-only models support feature mode only\n",
+                    __func__);
+            gguf_free(gguf_ctx);
+            return false;
+        }
+        hparams.num_classes = *num_classes;
         fprintf(stderr, "%s: num_classes            = %d\n", __func__, hparams.num_classes);
-        // read id2label dictionary into an ordered map (sort of an OrderedDict)
-        int num_labels = get_val_u32(gguf_ctx, std::string("num_classes").c_str());
-        for (int i = 0; i < num_labels; ++i) {
-            model.hparams.id2label[i] = get_val_str(gguf_ctx, std::to_string(i).c_str());
+
+        const auto has_tensor = [&](const char *name) { return ggml_get_tensor(tmp_ctx, name) != nullptr; };
+        if (!has_tensor("classifier.weight") || !has_tensor("classifier.bias")) {
+            fprintf(stderr,
+                    "%s: classification requested but GGUF is missing classifier.weight or classifier.bias; "
+                    "backbone-only models support feature mode only\n",
+                    __func__);
+            gguf_free(gguf_ctx);
+            return false;
+        }
+
+        // Read id2label dictionary into an ordered map. A classifier without
+        // labels is not safe to present as a classification-capable model.
+        for (uint32_t i = 0; i < hparams.num_classes; ++i) {
+            const std::string key = std::to_string(i);
+            if (gguf_find_key(gguf_ctx, key.c_str()) < 0) {
+                fprintf(stderr, "%s: classification GGUF is missing label metadata for class %u\n", __func__, i);
+                gguf_free(gguf_ctx);
+                return false;
+            }
+            model.hparams.id2label[static_cast<int>(i)] = get_val_str(gguf_ctx, key.c_str());
         }
     }
 

@@ -118,6 +118,26 @@ visual-behavior recommendation, not a universal classification or retrieval rank
 Use the matching no-register checkpoint for exact baseline reproduction or a
 task-specific comparison.
 
+### Backbone-only checkpoints
+
+Backbone-only DINOv2 checkpoints such as `facebook/dinov2-small`, `base`,
+`large`, and `giant` are supported in feature modes when converted to the
+repository GGUF layout. They expose CLS, pooled, patch-token, and PCA outputs,
+but they do not contain the ImageNet classifier head. Therefore `-c` fails
+cleanly with a message that classification requires a classifier GGUF rather
+than attempting to access missing tensors. A missing `num_register_tokens`
+metadata key is treated as zero registers for feature mode.
+
+The conversion and publishing workflows currently map the eight
+`imagenet1k-1-layer` checkpoints and their register-token counterparts. They do
+not publish backbone-only weights. Conversion and publishing of those weights
+remains a follow-up, and this documentation does not claim that published
+backbone-only files exist.
+
+DINOv2 task heads other than the existing ImageNet classifier, including depth
+and segmentation, are outside this interface. DINOv3 is a separate
+architecture and resource target and is also out of scope.
+
 ## Batch inference
 
 Multiple inputs are given by repeating `-i` and/or comma-separating

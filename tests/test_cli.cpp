@@ -97,6 +97,23 @@ int main(int argc, char **argv) {
         }
     }
 
+    // A malformed or model-less classification request must fail as a loader
+    // error, not reach a graph access or process assertion.
+    const std::string invalid_model = "/tmp/dinov2-cli-test-invalid.gguf";
+    {
+        std::ofstream file(invalid_model, std::ios::binary);
+        file << "not a GGUF model";
+    }
+    std::string loader_stdout;
+    std::string loader_stderr;
+    const int   loader_status = run_cli(cli, {"-m", invalid_model, "-c"}, loader_stdout, loader_stderr);
+    std::remove(invalid_model.c_str());
+    if (loader_status != 1 || !loader_stdout.empty() ||
+        loader_stderr.find("failed to load model") == std::string::npos ||
+        loader_stderr.find("assert") != std::string::npos) {
+        return 1;
+    }
+
     std::string stdout_output;
     std::string stderr_output;
     if (run_cli(cli, {"--help"}, stdout_output, stderr_output) != 0 || !stderr_output.empty() ||
