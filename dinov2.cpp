@@ -32,6 +32,10 @@
 #pragma warning(disable : 4244 4267) // possible loss of data
 #endif
 
+#ifndef DINOV2_VERSION
+#define DINOV2_VERSION "dev"
+#endif
+
 uint32_t dino_hparams::n_enc_head_dim() const {
     return hidden_size / num_attention_heads;
 }
@@ -660,32 +664,47 @@ struct ggml_cgraph *build_graph(const ImgSize img_size, struct ggml_context *ctx
     return gf;
 }
 
-void print_usage(int argc, char **argv, const dino_params &params) {
-    fprintf(stderr, "usage: %s [options]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help              show this help message and exit\n");
-    fprintf(stderr, "  -m FNAME, --model       model path (default: %s)\n", params.model.c_str());
-    fprintf(stderr, "  -i FNAME, --inp         input file (default: %s)\n", params.fname_inp.c_str());
-    fprintf(stderr, "  -o FNAME, --out         output file for backbone PCA features (default: %s)\n",
-            params.image_out.c_str());
-    fprintf(stderr, "  -k N, --topk            top k classes to print (default: %d)\n", params.topk);
-    fprintf(stderr, "  -t N, --threads         number of threads to use during computation (default: %d)\n",
+void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
+    fprintf(out, "usage: %s [options]\n", argv[0]);
+    fprintf(out, "\n");
+    fprintf(out, "Model:\n");
+    fprintf(out, "  -m FNAME, --model     model path (default: %s)\n", params.model.c_str());
+    fprintf(out, "  -fa, --flash_attn     enable flash attention, less accurate (default: off)\n");
+    fprintf(out, "  -t N, --threads       number of threads to use during computation (default: %d)\n",
             params.n_threads);
-    fprintf(stderr,
-            "  -c, --classify          whether to classify the image or get backbone PCA features (default: %d)\n",
-            params.classify);
-    fprintf(stderr, "  -fa, --flash_attn          whether to enable flash_attn, less accurate (default: %d)\n",
-            params.enable_flash_attn);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Benchmark:\n");
-    fprintf(stderr,
-            "  --bench                 enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
-    fprintf(stderr, "  --bench-runs N          number of timed runs (overrides default 5 when --bench is set)\n");
-    fprintf(stderr, "  --bench-warmup N        number of warmup runs discarded before timing (default: %u)\n",
+    fprintf(out, "\n");
+    fprintf(out, "Input:\n");
+    fprintf(out, "  -i FNAME, --inp       input image file (default: %s)\n", params.fname_inp.c_str());
+    fprintf(out, "  -s N, --seed          RNG seed (default: %d)\n", params.seed);
+    fprintf(out, "\n");
+    fprintf(out, "Output modes:\n");
+    fprintf(out, "  -c, --classify        classify the image and print top-k labels (default: off)\n");
+    fprintf(out, "  -k N, --topk          top k classes to print (default: %d)\n", params.topk);
+    fprintf(out, "  --print-embeddings    emit one JSON object on stdout with cls/pooled embeddings\n");
+    fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the JSON output\n");
+    fprintf(out, "  --l2-normalize        L2-normalize emitted embedding vectors\n");
+    fprintf(out, "  -o FNAME, --out       write PCA visualization of patch features to FNAME (default: off)\n");
+    fprintf(out, "\n");
+    fprintf(out, "Benchmark:\n");
+    fprintf(out, "  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
+    fprintf(out, "  --bench-runs N        number of timed runs (overrides default 5 when --bench is set)\n");
+    fprintf(out, "  --bench-warmup N      number of warmup runs discarded before timing (default: %u)\n",
             params.bench_warmup);
-    fprintf(stderr, "  --bench-json            emit one JSON object per line to stdout instead of markdown row\n");
-    fprintf(stderr, "\n");
+    fprintf(out, "  --bench-json          emit one JSON object per line to stdout instead of markdown row\n");
+    fprintf(out, "\n");
+    fprintf(out, "Misc:\n");
+    fprintf(out, "  -h, --help            show this help message and exit\n");
+    fprintf(out, "  --version             print version and exit\n");
+    fprintf(out, "\n");
+    fprintf(out, "Workflows:\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg -c                        # classify: top-k labels\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --print-embeddings        # embeddings JSON on stdout\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --print-embeddings --print-patch-tokens\n");
+    fprintf(out, "                                                                # + per-patch tokens\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg -o pca.png                # PCA viz of patch features\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --bench --bench-json      # benchmark, JSON lines\n");
+    fprintf(out, "\n");
+    fprintf(out, "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n");
 }
 
 bool dino_params_parse(int argc, char **argv, dino_params &params) {
@@ -720,13 +739,22 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             params.bench_warmup = std::stoi(argv[++i]);
         } else if (arg == "--bench-json") {
             params.bench_json = true;
+        } else if (arg == "--print-embeddings") {
+            params.print_embeddings = true;
+        } else if (arg == "--print-patch-tokens") {
+            params.print_patch_tokens = true;
+        } else if (arg == "--l2-normalize") {
+            params.l2_normalize = true;
+        } else if (arg == "--version") {
+            fprintf(stdout, "dinov2-cli %s\n", DINOV2_VERSION);
+            exit(0);
         } else if (arg == "-h" || arg == "--help") {
-            print_usage(argc, argv, params);
+            print_usage(stdout, argc, argv, params);
             exit(0);
         } else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
-            print_usage(argc, argv, params);
-            exit(0);
+            print_usage(stderr, argc, argv, params);
+            exit(1);
         }
     }
 
