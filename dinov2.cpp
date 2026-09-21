@@ -802,28 +802,58 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
     return true;
 }
 
-std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img, const dino_params &params,
-                                          ggml_gallocr_t allocr) {
+std::vector<dino_output> dino_predict(const dino_model &model, const std::vector<ImageF> &imgs,
+                                      const dino_params &params, ggml_gallocr_t allocr) {
+    if (imgs.empty()) {
+        fprintf(stderr, "%s: no input images\n", __func__);
+        return {};
+    }
+    if (imgs.size() > params.n_batch) {
+        fprintf(stderr, "%s: %zu images exceed n_batch = %u\n", __func__, imgs.size(), params.n_batch);
+        return {};
+    }
+    // a single graph is built for the whole batch, so every image must share
+    // the same dimensions (preprocessing decides the graph's input size)
+    const int nx = imgs[0].nx;
+    const int ny = imgs[0].ny;
+    for (const ImageF &img : imgs) {
+        if (img.nx != nx || img.ny != ny) {
+            fprintf(stderr, "%s: batch images must share dimensions (%dx%d vs %dx%d)\n", __func__, img.nx, img.ny, nx,
+                    ny);
+            return {};
+        }
+    }
+
+    // the graph batch dimension is the number of images actually provided
+    dino_params batch_params = params;
+    batch_params.n_batch     = (uint32_t)imgs.size();
+    const size_t n_batch     = imgs.size();
+    const size_t hidden_size = model.hparams.hidden_size;
+    const size_t npix        = (size_t)nx * ny;
+    const int    num_patches = (ny / (int)model.hparams.patch_size) * (nx / (int)model.hparams.patch_size);
+
     struct ggml_init_params params0 = {
         /*.mem_size   =*/ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE + ggml_graph_overhead(),
         /*.mem_buffer =*/nullptr,
         /*.no_alloc   =*/true, // the tensors will be allocated later by ggml_gallocr_alloc_graph()
     };
     struct ggml_context *ctx_cgraph = ggml_init(params0);
-    struct ggml_cgraph  *gf         = build_graph({img.nx, img.ny}, ctx_cgraph, model, params);
+    struct ggml_cgraph  *gf         = build_graph({nx, ny}, ctx_cgraph, model, batch_params);
 
     ggml_gallocr_alloc_graph(allocr, gf);
 
     struct ggml_tensor *input = ggml_graph_get_tensor(gf, "input");
 
-    const size_t npix = (size_t)img.nx * img.ny;
     // Convert interleaved RGB to planar RGB layout (image is already RGB,
-    // no BGR swap needed)
-    std::vector<float> planar(npix * 3);
-    for (size_t i = 0; i < npix; ++i) {
-        planar[0 * npix + i] = img.data[i * 3 + 0]; // R
-        planar[1 * npix + i] = img.data[i * 3 + 1]; // G
-        planar[2 * npix + i] = img.data[i * 3 + 2]; // B
+    // no BGR swap needed), one 3*npix block per batch element
+    std::vector<float> planar(npix * 3 * n_batch);
+    for (size_t b = 0; b < n_batch; ++b) {
+        float *dst = planar.data() + b * npix * 3;
+        for (size_t i = 0; i < npix; ++i) {
+            dst[0 * npix + i] = imgs[b].data[i * 3 + 0]; // R
+            dst[1 * npix + i] = imgs[b].data[i * 3 + 1]; // G
+            dst[2 * npix + i] = imgs[b].data[i * 3 + 2]; // B
+        }
     }
 
     ggml_backend_tensor_set(input, planar.data(), 0, ggml_nbytes(input));
@@ -831,7 +861,7 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
     const struct ggml_tensor *pos_embed = ggml_get_tensor(model.ctx, "embeddings.position_embeddings");
 
     const std::vector<float> pos_embed_fixed_data =
-        interpolate_pos_embed({img.nx, img.ny}, (float *)(pos_embed->data), model.hparams);
+        interpolate_pos_embed({nx, ny}, (float *)(pos_embed->data), model.hparams);
 
     struct ggml_tensor *pos_embed_fixed = ggml_graph_get_tensor(gf, "pos_embed_fixed");
 
@@ -839,83 +869,90 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
 
     if (ggml_backend_graph_compute(model.backend, gf) != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "%s: ggml_backend_graph_compute() failed\n", __func__);
+        ggml_free(ctx_cgraph);
         return {};
     }
 
-    auto output = std::make_unique<dino_output>();
+    std::vector<dino_output> outputs(n_batch);
 
     // cls_token is marked as an output unconditionally by forward_features;
-    // read it in both classify and feature modes.
-    const size_t hidden_size = model.hparams.hidden_size;
-    {
-        struct ggml_tensor *cls      = ggml_graph_get_tensor(gf, "cls_token");
-        const float        *cls_data = ggml_get_data_f32(cls);
-        output->cls_token            = std::vector<float>(cls_data, cls_data + hidden_size);
-    }
+    // read it in both classify and feature modes. It is a dense
+    // (hidden, 1, 1, B) block: image b's vector starts at b * hidden_size.
+    const float *cls_data = ggml_get_data_f32(ggml_graph_get_tensor(gf, "cls_token"));
 
     if (params.classify) {
-        struct ggml_tensor                *probs      = ggml_graph_get_tensor(gf, "probs");
-        const float                       *probs_data = ggml_get_data_f32(probs);
-        std::vector<std::pair<float, int>> predictions;
-        // store probability and index
-        for (int i = 0; i < model.hparams.num_classes; ++i) {
-            predictions.emplace_back(probs_data[i], i);
-        }
+        // probs is a dense (num_classes, 1, 1, B) block
+        const float *probs_data = ggml_get_data_f32(ggml_graph_get_tensor(gf, "probs"));
+        for (size_t b = 0; b < n_batch; ++b) {
+            dino_output &output = outputs[b];
+            output.cls_token    = std::vector<float>(cls_data + b * hidden_size, cls_data + (b + 1) * hidden_size);
 
-        // sort in descending order
-        std::sort(predictions.begin(), predictions.end(),
-                  [](const std::pair<float, int> &a, const std::pair<float, int> &b) { return a.first > b.first; });
-
-        // top k predictions: class indices in preds, probabilities in pred_scores.
-        // Label printing is left to the caller (dino_predict must not write to stdout).
-        const uint32_t        topk = std::min(params.topk, (uint32_t)predictions.size());
-        std::vector<uint32_t> preds(topk);
-        std::vector<float>    scores(topk);
-        for (uint32_t i = 0; i < topk; ++i) {
-            preds[i]  = static_cast<uint32_t>(predictions[i].second);
-            scores[i] = predictions[i].first;
-        }
-
-        output->preds       = std::move(preds);
-        output->pred_scores = std::move(scores);
-    } else {
-        struct ggml_tensor *patches           = ggml_graph_get_tensor(gf, "patch_tokens");
-        const float        *patch_tokens_data = ggml_get_data_f32(patches);
-        const int           h0                = img.ny / model.hparams.patch_size;
-        const int           w0                = img.nx / model.hparams.patch_size;
-        const int           num_patches       = h0 * w0;
-
-        output->patch_tokens =
-            std::vector<float>(patch_tokens_data, patch_tokens_data + (size_t)num_patches * hidden_size);
-
-        // pooled = [cls_token || mean(patch_tokens)], 2*hidden floats, cls first
-        std::vector<float> pooled(2 * hidden_size, 0.0f);
-        std::copy(output->cls_token->begin(), output->cls_token->end(), pooled.begin());
-        float *mean = pooled.data() + hidden_size;
-        for (int p = 0; p < num_patches; ++p) {
-            const float *row = patch_tokens_data + (size_t)p * hidden_size;
-            for (size_t d = 0; d < hidden_size; ++d) {
-                mean[d] += row[d];
+            const float                       *img_probs = probs_data + b * model.hparams.num_classes;
+            std::vector<std::pair<float, int>> predictions;
+            // store probability and index
+            for (int i = 0; i < model.hparams.num_classes; ++i) {
+                predictions.emplace_back(img_probs[i], i);
             }
+
+            // sort in descending order
+            std::sort(predictions.begin(), predictions.end(),
+                      [](const std::pair<float, int> &a, const std::pair<float, int> &b) { return a.first > b.first; });
+
+            // top k predictions: class indices in preds, probabilities in pred_scores.
+            // Label printing is left to the caller (dino_predict must not write to stdout).
+            const uint32_t        topk = std::min(params.topk, (uint32_t)predictions.size());
+            std::vector<uint32_t> preds(topk);
+            std::vector<float>    scores(topk);
+            for (uint32_t i = 0; i < topk; ++i) {
+                preds[i]  = static_cast<uint32_t>(predictions[i].second);
+                scores[i] = predictions[i].first;
+            }
+
+            output.preds       = std::move(preds);
+            output.pred_scores = std::move(scores);
         }
-        for (size_t d = 0; d < hidden_size; ++d) {
-            mean[d] /= (float)num_patches;
+    } else {
+        // patch_tokens is a dense (hidden, num_patches, 1, B) block; each
+        // image's region is a contiguous num_patches * hidden_size slice
+        const float *patch_tokens_data = ggml_get_data_f32(ggml_graph_get_tensor(gf, "patch_tokens"));
+        for (size_t b = 0; b < n_batch; ++b) {
+            dino_output &output = outputs[b];
+            output.cls_token    = std::vector<float>(cls_data + b * hidden_size, cls_data + (b + 1) * hidden_size);
+
+            const float *img_patches = patch_tokens_data + b * (size_t)num_patches * hidden_size;
+            output.patch_tokens      = std::vector<float>(img_patches, img_patches + (size_t)num_patches * hidden_size);
+
+            // pooled = [cls_token || mean(patch_tokens)], 2*hidden floats, cls first
+            std::vector<float> pooled(2 * hidden_size, 0.0f);
+            std::copy(output.cls_token->begin(), output.cls_token->end(), pooled.begin());
+            float *mean = pooled.data() + hidden_size;
+            for (int p = 0; p < num_patches; ++p) {
+                const float *row = img_patches + (size_t)p * hidden_size;
+                for (size_t d = 0; d < hidden_size; ++d) {
+                    mean[d] += row[d];
+                }
+            }
+            for (size_t d = 0; d < hidden_size; ++d) {
+                mean[d] /= (float)num_patches;
+            }
+            output.pooled = std::move(pooled);
         }
-        output->pooled = std::move(pooled);
     }
 
     if (params.l2_normalize) {
-        if (output->cls_token) {
-            l2_normalize(*output->cls_token);
-        }
-        if (output->pooled) {
-            l2_normalize(*output->pooled);
-        }
-        if (output->patch_tokens) {
-            // normalize each patch row independently
-            const size_t n_rows = output->patch_tokens->size() / hidden_size;
-            for (size_t r = 0; r < n_rows; ++r) {
-                l2_normalize_span(output->patch_tokens->data() + r * hidden_size, hidden_size);
+        for (dino_output &output : outputs) {
+            if (output.cls_token) {
+                l2_normalize(*output.cls_token);
+            }
+            if (output.pooled) {
+                l2_normalize(*output.pooled);
+            }
+            if (output.patch_tokens) {
+                // normalize each patch row independently
+                const size_t n_rows = output.patch_tokens->size() / hidden_size;
+                for (size_t r = 0; r < n_rows; ++r) {
+                    l2_normalize_span(output.patch_tokens->data() + r * hidden_size, hidden_size);
+                }
             }
         }
     }
@@ -923,5 +960,14 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
     // free memory
     ggml_free(ctx_cgraph);
 
-    return output;
+    return outputs;
+}
+
+std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img, const dino_params &params,
+                                          ggml_gallocr_t allocr) {
+    std::vector<dino_output> outputs = dino_predict(model, std::vector<ImageF>{img}, params, allocr);
+    if (outputs.empty()) {
+        return nullptr;
+    }
+    return std::make_unique<dino_output>(std::move(outputs[0]));
 }

@@ -119,6 +119,14 @@ std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embe
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
                                 const dino_params &params);
 
+// Batch inference: runs the model on up to params.n_batch preprocessed images
+// and returns one dino_output per image, in input order. All images must share
+// the same dimensions (they are packed into a single graph whose batch
+// dimension is imgs.size()). Returns an empty vector on failure.
+std::vector<dino_output> dino_predict(const dino_model &model, const std::vector<ImageF> &imgs,
+                                      const dino_params &params, ggml_gallocr_t allocr);
+
+// Single-image convenience wrapper around the batch form.
 std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img, const dino_params &params,
                                           ggml_gallocr_t allocr);
 
