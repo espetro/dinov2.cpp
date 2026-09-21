@@ -85,8 +85,8 @@ struct dino_params {
     bool     bench_json    = false;
 };
 
-struct ggml_tensor *attn(struct ggml_tensor *cur, int il, struct ggml_context *ctx_cgraph, const dino_model &model,
-                         const dino_params &params);
+struct ggml_tensor *attn(struct ggml_tensor *cur, const float scale, int il, struct ggml_context *ctx_cgraph,
+                         const dino_model &model, const dino_params &params);
 
 struct ggml_tensor *mlp(struct ggml_tensor *cur, int il, struct ggml_context *ctx_cgraph, const dino_model &model,
                         const dino_params &params);
