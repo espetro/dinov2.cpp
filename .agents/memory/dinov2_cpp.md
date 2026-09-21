@@ -1,5 +1,20 @@
 # dinov2.cpp fork — project notes
 
+## 2026-09-21 — embeddings-dropin PR 1 complete (branch feat/embeddings-dropin, 5cd839d..16a5cb6)
+
+- Goal: drop-in replacement for HF PyTorch DINOv2. Swap-score was 2.5/10; PR 1 closes the hard blockers (embeddings output, classify parity, agent-facing CLI/docs).
+- `dino_output` now carries cls, pooled `[cls‖mean(patches)]`, patch tokens (feature mode), `preds` (class idx) + `pred_scores`. Registers excluded from patch view in BOTH modes — HF bug #37817 parity; the earlier classify pooling included registers and diverged ~0.0066 prob on with-registers checkpoints.
+- Classify preprocessing is 256-shortest-edge + 224-crop per HF `preprocessor_config.json` — NOT the GGUF `img_size` 518 (that's backbone-native; resizing to 518 breaks parity). Gap report's suggested 518 fix was wrong.
+- Two latent bugs the gap report missed: `preds[i]` stored probability-as-uint32 (always ~0) not class idx; `forward_head` divided by `n_img_embd²` (1369 at img_size 518) instead of actual patch count — pooled features ~5.3× under-scaled at 224 input.
+- CLI: `--print-embeddings` (JSON stdout: model/image/n_patches/hidden/cls/pooled, +patches w/ --print-patch-tokens, +topk w/ -c), `--l2-normalize`, `--version` (CMake `DINOV2_VERSION` define from PROJECT_VERSION, "dev" fallback), `-o` now opt-in for PCA PNG (was default `pca_visual.jpg`, actually PNG bytes), unknown-arg exits 1, argv bounds on all value flags, data on stdout / logs on stderr.
+- Docs: `docs/cli.md` is the full agent-facing reference; `--help` links the raw.githubusercontent URL. Model filename is `model.gguf` (HF `dinov2-cpp-core/*-gguf` repos), not `ggml-model.gguf`.
+- `scripts/parity_check.py`: HF AutoModel vs CLI JSON. Gates: cls/pooled/flat-patch cosine ≥0.999, top-1 match, |Δprob|<0.05. Per-token-min is diagnostic only (f16 tail ~0.98 expected); strict opt-in via `--patches-token-min-threshold`. Observed: no-reg cls 0.999911 / flat 0.999570; with-reg cls 0.999984 / flat 0.999847.
+- CMakePresets.json now has buildPresets — `cmake --build --preset <name>` works (docs always claimed it; it silently couldn't before).
+- Deferred minors in `.superpowers/sdd/2026-09-21-embeddings-dropin/progress.md` (json_escape control chars, nan/inf in %.6g, div-by-zero guard, nothing-to-do hint omits --bench).
+- PR 2 pending: `--batch N` batching. Known hardcoded-1 sites: dinov2.cpp input tensor (~472), flash reshape (~390), non-flash reshape (~403-404); attention partially batch-aware (`B = cur->ne[3]`).
+- Process note: no GitHub Project configured for this repo — user approved proceeding without one; raise later.
+- Norma MCP unavailable this session (server dropped) — live_check never ran; don't claim it.
+
 ## Repo identity
 
 - Upstream: `https://github.com/lavaman131/dinov2.cpp` (no releases, no CI)
