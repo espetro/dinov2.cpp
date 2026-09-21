@@ -4,15 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: "Which f16 GGUF to bench (single variant or 'all')"
+        description: "Which published f16 GGUF to bench (single variant or 'all')"
         required: false
         default: "small"
         type: choice
         options:
           - small
+          - small-registers
           - base
+          - base-registers
           - large
+          - large-registers
           - giant
+          - giant-registers
           - all
       repeats:
         description: "Timed runs per cell (forwarded to scripts/bench.sh --repeats)"
@@ -90,16 +94,26 @@ jobs:
           BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
         run: |
           set -euo pipefail
-          # scripts/bench.sh hard-codes paths of the form
-          # `models/dinov2-vit-<variant>-patch14/model.gguf`. The HF
-          # repos ship `dinov2-{small,base,large,giant}-gguf` and the
-          # uploaded file is named `model.gguf` (no quant suffix); f16
-          # is the only quant this repo benches natively per the v0.3.0
-          # commit that dropped the --quants loop.
+          # scripts/bench.sh uses a separate directory for each published
+          # regular or register-token checkpoint. Each HF repo uploads its
+          # f16 file as model.gguf; no quantization benchmark selector is used.
           variant_list="${BENCH_MODELS//,/ }"
           for variant in $variant_list; do
-            repo="dinov2-cpp-core/dinov2-${variant}-gguf"
-            target_dir="models/dinov2-vit-${variant}-patch14"
+            case "$variant" in
+              small|base|large|giant)
+                repo="dinov2-cpp-core/dinov2-${variant}-gguf"
+                target_dir="models/dinov2-vit-${variant}-patch14"
+                ;;
+              small-registers|base-registers|large-registers|giant-registers)
+                size="${variant%-registers}"
+                repo="dinov2-cpp-core/dinov2-with-registers-${size}-gguf"
+                target_dir="models/dinov2-with-registers-${size}-patch14"
+                ;;
+              *)
+                echo "::error::Unsupported benchmark variant: $variant" >&2
+                exit 1
+                ;;
+            esac
             mkdir -p "$target_dir"
             echo "Downloading $repo -> $target_dir/model.gguf"
             hf download \
@@ -122,10 +136,18 @@ jobs:
             printf 'commit=%s\n' "$GITHUB_SHA"
             printf 'variant_input=%s\n' "$BENCH_VARIANT_INPUT"
             printf 'models=%s\n' "$BENCH_MODELS"
+            printf 'image_path=assets/tench.jpg\n'
+            printf 'build_configuration=Release\n'
+            printf 'platform=ubuntu-latest\n'
+            printf 'quantization=f16 only\n'
           } > "$provenance_path"
           variant_list="${BENCH_MODELS//,/ }"
           for variant in $variant_list; do
-            target="models/dinov2-vit-${variant}-patch14/model.gguf"
+            case "$variant" in
+              small|base|large|giant) target="models/dinov2-vit-${variant}-patch14/model.gguf" ;;
+              small-registers|base-registers|large-registers|giant-registers) target="models/dinov2-with-registers-${variant%-registers}-patch14/model.gguf" ;;
+              *) echo "::error::Unsupported benchmark variant: $variant" >&2; exit 1 ;;
+            esac
             if [ ! -f "$target" ]; then
               echo "::error::Missing $target after download" >&2
               exit 3
@@ -142,6 +164,7 @@ jobs:
           BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
           BENCH_REPEATS: ${{ inputs.repeats }}
           BENCH_THREADS: ${{ inputs.threads }}
+          BENCH_BUILD_CONFIG: Release
         run: |
           set -euo pipefail
           echo "models selected: $BENCH_MODELS"
