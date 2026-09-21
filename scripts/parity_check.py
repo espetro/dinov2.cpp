@@ -102,7 +102,10 @@ def resolve_gguf(requested: str) -> Path:
 
 def run_cli_json(cli: Path, gguf: Path, image: Path, extra: Sequence[str]) -> dict:
     cmd = [str(cli), "-m", str(gguf), "-i", str(image), *extra]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"dinov2-cli timed out after 300s: {' '.join(cmd)}")
     if proc.returncode != 0:
         raise RuntimeError(f"dinov2-cli exited {proc.returncode}: {' '.join(cmd)}\nstderr:\n{proc.stderr}")
     try:
@@ -273,6 +276,9 @@ def main() -> int:
         return 1
 
     image_paths = [Path(p) for p in parse_images(args.image)]
+    if not image_paths:
+        print("error: no images to check (--image resolved to an empty list)", file=sys.stderr)
+        return 1
     for p in image_paths:
         if not p.is_file():
             print(f"error: image not found at '{p}'", file=sys.stderr)
