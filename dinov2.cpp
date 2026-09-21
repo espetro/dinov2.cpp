@@ -210,7 +210,7 @@ std::vector<float> interpolate_pos_embed(const ImgSize       img_size,
 
 // load the model's weights from a file following the ggml format(gguf)
 bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_model &model, const dino_params &params) {
-    printf("%s: loading model from '%s' - please wait\n", __func__, fname.c_str());
+    fprintf(stderr, "%s: loading model from '%s' - please wait\n", __func__, fname.c_str());
 #ifdef GGML_USE_CUDA
     fprintf(stderr, "%s: using CUDA backend\n", __func__);
     model.backend = ggml_backend_cuda_init(0); // init device 0
@@ -258,18 +258,18 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
 
     const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
-    printf("%s: hidden_size            = %d\n", __func__, hparams.hidden_size);
-    printf("%s: num_hidden_layers      = %d\n", __func__, hparams.num_hidden_layers);
-    printf("%s: num_register_tokens    = %d\n", __func__, hparams.num_register_tokens);
-    printf("%s: num_attention_heads    = %d\n", __func__, hparams.num_attention_heads);
-    printf("%s: patch_size             = %d\n", __func__, hparams.patch_size);
-    printf("%s: img_size               = %d\n", __func__, hparams.img_size);
-    printf("%s: ftype                  = %d\n", __func__, hparams.ftype);
-    printf("%s: qntvr                  = %d\n", __func__, qntvr);
+    fprintf(stderr, "%s: hidden_size            = %d\n", __func__, hparams.hidden_size);
+    fprintf(stderr, "%s: num_hidden_layers      = %d\n", __func__, hparams.num_hidden_layers);
+    fprintf(stderr, "%s: num_register_tokens    = %d\n", __func__, hparams.num_register_tokens);
+    fprintf(stderr, "%s: num_attention_heads    = %d\n", __func__, hparams.num_attention_heads);
+    fprintf(stderr, "%s: patch_size             = %d\n", __func__, hparams.patch_size);
+    fprintf(stderr, "%s: img_size               = %d\n", __func__, hparams.img_size);
+    fprintf(stderr, "%s: ftype                  = %d\n", __func__, hparams.ftype);
+    fprintf(stderr, "%s: qntvr                  = %d\n", __func__, qntvr);
 
     if (params.classify) {
         hparams.num_classes = get_val_u32(gguf_ctx, std::string("num_classes").c_str());
-        printf("%s: num_classes            = %d\n", __func__, hparams.num_classes);
+        fprintf(stderr, "%s: num_classes            = %d\n", __func__, hparams.num_classes);
         // read id2label dictionary into an ordered map (sort of an OrderedDict)
         int num_labels = get_val_u32(gguf_ctx, std::string("num_classes").c_str());
         for (int i = 0; i < num_labels; ++i) {
