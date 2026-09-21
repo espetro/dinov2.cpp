@@ -20,7 +20,7 @@ not a seed or estimate.
 - Platform: `ubuntu-latest`, reported by the runner as `linux-x86_64`
 - Repository SHA: `9d0a6265ae53088e423e4c2417ec8589de181e99`
 - GGUF path: `models/dinov2-vit-small-patch14/model.gguf`
-- GGUF SHA-256: `b7ca009aa416f6be85ea95363f4ef13d3c139999f96ca3fd47226849afb712e`
+- GGUF SHA-256: `b7ca009aa416f6be85ea95363f4ef13d3c139999f96ca3fd47226849afb712e6`
 - Image: `assets/tench.jpg`
 - Precision: f16 GGUF
 - Backend: CPU

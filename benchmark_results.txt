@@ -10,7 +10,7 @@
 
 | Model | GGUF path | GGUF SHA256 | mean (ms) | stddev (ms) | min (ms) | max (ms) | peak RSS (MB) |
 |:------|:----------|:------------|----------:|------------:|---------:|---------:|---------------:|
-| small | models/dinov2-vit-small-patch14/model.gguf | b7ca009aa416f6be85ea95363f4ef13d3c139999f96ca3fd47226849afb712e | 255.0 | 9.1 | 249 | 271 | 104 |
+| small | models/dinov2-vit-small-patch14/model.gguf | b7ca009aa416f6be85ea95363f4ef13d3c139999f96ca3fd47226849afb712e6 | 255.0 | 9.1 | 249 | 271 | 104 |
 
 # Measurement: forward-pass wall time from dinov2-cli; image load, preprocessing, classification, and PCA are excluded.
 # Unmeasured: register-token variants, base/large/giant sizes, non-Ubuntu platforms, GPU backends, and quantization comparisons.

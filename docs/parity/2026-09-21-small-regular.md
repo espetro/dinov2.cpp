@@ -7,7 +7,7 @@
 * CLI version: `dinov2-cli 0.3.0`
 * HF reference: local `/tmp/dinov2-final-work/hf/dinov2-small-imagenet1k-1-layer` downloaded from `facebook/dinov2-small-imagenet1k-1-layer`
 * GGUF path used: `/tmp/dinov2-final-work/public/regular/model.gguf` downloaded from `dinov2-cpp-core/dinov2-small-gguf`
-* GGUF SHA256: `b7ca009aa416f6be85ea95363f4ef13d3c139999f96ca3fd47226849afb712e`
+* GGUF SHA256: `b7ca009aa416f6be85ea95363f4ef13d3c139999f96ca3fd47226849afb712e6`
 * Image: `assets/tench.jpg`
 * Environment: Darwin 25.6.0, Apple arm64, MacBookPro17,1, Apple M1, Metal backend, 8 CPUs
 
