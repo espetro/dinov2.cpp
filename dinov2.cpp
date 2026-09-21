@@ -64,6 +64,25 @@ const char *get_val_str(const struct gguf_context *ctx, const char *key) {
 // Helpers
 //
 
+// L2-normalize a contiguous span in place; zero vectors are left unchanged.
+static void l2_normalize_span(float *data, size_t n) {
+    double norm_sq = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        norm_sq += (double)data[i] * data[i];
+    }
+    if (norm_sq == 0.0) {
+        return;
+    }
+    const float inv_norm = (float)(1.0 / std::sqrt(norm_sq));
+    for (size_t i = 0; i < n; ++i) {
+        data[i] *= inv_norm;
+    }
+}
+
+void l2_normalize(std::vector<float> &v) {
+    l2_normalize_span(v.data(), v.size());
+}
+
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params) {
     // 1) shortest-edge resize preserving aspect ratio (HF BitImageProcessor
     //    parity): scale so the shorter side becomes 256.
@@ -756,6 +775,15 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
 
     auto output = std::make_unique<dino_output>();
 
+    // cls_token is marked as an output unconditionally by forward_features;
+    // read it in both classify and feature modes.
+    const size_t hidden_size = model.hparams.hidden_size;
+    {
+        struct ggml_tensor *cls      = ggml_graph_get_tensor(gf, "cls_token");
+        const float        *cls_data = ggml_get_data_f32(cls);
+        output->cls_token            = std::vector<float>(cls_data, cls_data + hidden_size);
+    }
+
     if (params.classify) {
         struct ggml_tensor                *probs      = ggml_graph_get_tensor(gf, "probs");
         const float                       *probs_data = ggml_get_data_f32(probs);
@@ -769,16 +797,18 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
         std::sort(predictions.begin(), predictions.end(),
                   [](const std::pair<float, int> &a, const std::pair<float, int> &b) { return a.first > b.first; });
 
-        fprintf(stderr, "\n");
-
-        // top k predictions
-        std::vector<uint32_t> preds(params.topk);
-        for (int i = 0; i < params.topk && i < predictions.size(); ++i) {
-            printf(" > %s : %.2f\n", model.hparams.id2label.at(predictions[i].second).c_str(), predictions[i].first);
-            preds[i] = static_cast<uint32_t>(predictions[i].first);
+        // top k predictions: class indices in preds, probabilities in pred_scores.
+        // Label printing is left to the caller (dino_predict must not write to stdout).
+        const uint32_t        topk = std::min(params.topk, (uint32_t)predictions.size());
+        std::vector<uint32_t> preds(topk);
+        std::vector<float>    scores(topk);
+        for (uint32_t i = 0; i < topk; ++i) {
+            preds[i]  = static_cast<uint32_t>(predictions[i].second);
+            scores[i] = predictions[i].first;
         }
 
-        output->preds = preds;
+        output->preds       = std::move(preds);
+        output->pred_scores = std::move(scores);
     } else {
         struct ggml_tensor *patches           = ggml_graph_get_tensor(gf, "patch_tokens");
         const float        *patch_tokens_data = ggml_get_data_f32(patches);
@@ -787,7 +817,38 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
         const int           num_patches       = h0 * w0;
 
         output->patch_tokens =
-            std::vector<float>(patch_tokens_data, patch_tokens_data + (size_t)num_patches * model.hparams.hidden_size);
+            std::vector<float>(patch_tokens_data, patch_tokens_data + (size_t)num_patches * hidden_size);
+
+        // pooled = [cls_token || mean(patch_tokens)], 2*hidden floats, cls first
+        std::vector<float> pooled(2 * hidden_size, 0.0f);
+        std::copy(output->cls_token->begin(), output->cls_token->end(), pooled.begin());
+        float *mean = pooled.data() + hidden_size;
+        for (int p = 0; p < num_patches; ++p) {
+            const float *row = patch_tokens_data + (size_t)p * hidden_size;
+            for (size_t d = 0; d < hidden_size; ++d) {
+                mean[d] += row[d];
+            }
+        }
+        for (size_t d = 0; d < hidden_size; ++d) {
+            mean[d] /= (float)num_patches;
+        }
+        output->pooled = std::move(pooled);
+    }
+
+    if (params.l2_normalize) {
+        if (output->cls_token) {
+            l2_normalize(*output->cls_token);
+        }
+        if (output->pooled) {
+            l2_normalize(*output->pooled);
+        }
+        if (output->patch_tokens) {
+            // normalize each patch row independently
+            const size_t n_rows = output->patch_tokens->size() / hidden_size;
+            for (size_t r = 0; r < n_rows; ++r) {
+                l2_normalize_span(output->patch_tokens->data() + r * hidden_size, hidden_size);
+            }
+        }
     }
 
     // free memory
