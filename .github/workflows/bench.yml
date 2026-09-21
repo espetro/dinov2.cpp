@@ -111,8 +111,18 @@ jobs:
       - name: Verify staged weights
         env:
           BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
+          BENCH_VARIANT_INPUT: ${{ inputs.variant }}
         run: |
           set -euo pipefail
+          provenance_path=benchmark_provenance.txt
+          {
+            printf 'workflow=bench.yml\n'
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'commit=%s\n' "$GITHUB_SHA"
+            printf 'variant_input=%s\n' "$BENCH_VARIANT_INPUT"
+            printf 'models=%s\n' "$BENCH_MODELS"
+          } > "$provenance_path"
           variant_list="${BENCH_MODELS//,/ }"
           for variant in $variant_list; do
             target="models/dinov2-vit-${variant}-patch14/model.gguf"
@@ -121,7 +131,11 @@ jobs:
               exit 3
             fi
             printf "%-50s %10d bytes\n" "$target" "$(stat -c %s "$target")"
+            printf 'model_path=%s\n' "$target" >> "$provenance_path"
+            sha256sum "$target" >> "$provenance_path"
           done
+          echo "--- $provenance_path ---"
+          cat "$provenance_path"
 
       - name: Run benchmarks
         env:
@@ -148,6 +162,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-results-${{ inputs.variant }}-${{ github.run_id }}
-          path: benchmark_results.txt
+          path: |
+            benchmark_results.txt
+            benchmark_provenance.txt
           if-no-files-found: error
           retention-days: 90

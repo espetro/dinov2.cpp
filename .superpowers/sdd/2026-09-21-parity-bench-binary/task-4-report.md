@@ -71,7 +71,7 @@ No models, build outputs, or release artifacts were added to the repository.
 
 The benchmark workflow now uses the supported `hf download` command from the already-installed `huggingface_hub[cli]` package. The repository, local directory, and `model.gguf` arguments are unchanged; no benchmark semantics or inputs were changed.
 
-## Complete rerun result: 2026-09-21
+## Blocked rerun result: 2026-09-21
 
 ### Status
 
@@ -166,3 +166,11 @@ The artifact reported the small f16 GGUF on the CPU backend with one warmup, fiv
 - `benchmark_results.txt`: replaced with the inspected artifact data plus explicit run and commit provenance.
 - `docs/benchmarks.md`: updated to report only the actual Ubuntu small-model measurement and deferred multi-platform coverage.
 - No models, build outputs, or release artifacts were added to the repository.
+
+## Review fixes: 2026-09-21
+
+- The manual benchmark workflow now records the exact staged GGUF path and the `sha256sum` output for every selected model in `benchmark_provenance.txt`.
+- The provenance file also records the workflow, run ID, attempt, commit, selected input, and resolved model list, and is uploaded alongside `benchmark_results.txt`.
+- `scripts/bench.sh` now directs future users to generate results with the manual workflow and commit them with the workflow artifact provenance. Metrics and f16-only scope were unchanged.
+- The first blocked 2026-09-21 rerun section was retitled to distinguish it from the completed 2026-09-21 rerun section.
+- `benchmark_results.txt` and `docs/benchmarks.md` remain unchanged. No benchmark was rerun and no push was performed.
