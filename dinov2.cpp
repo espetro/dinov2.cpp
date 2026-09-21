@@ -64,32 +64,6 @@ const char *get_val_str(const struct gguf_context *ctx, const char *key) {
 // Helpers
 //
 
-void print_t_f32(const char *title, const struct ggml_tensor *t, const int n = 10) {
-    printf("%s\n", title);
-    const auto *data = (float *)(t->data);
-    printf("dims: % " PRId64 " % " PRId64 " % " PRId64 " % " PRId64 " f32\n", t->ne[0], t->ne[1], t->ne[2], t->ne[3]);
-    printf("First & Last %d elements:\n", n);
-    for (int i = 0; i < std::min((int)(t->ne[0] * t->ne[1]), n); i++) {
-        printf("%.5f ", data[i]);
-        if (i != 0 && i % t->ne[0] == 0) {
-            printf("\n");
-        }
-    }
-    printf("\n");
-    for (int i = 0; i < std::min((int)(t->ne[0] * t->ne[1]), n); i++) {
-        printf("%.5f ", data[ggml_nelements(t) - n + i]);
-        if ((ggml_nelements(t) - n + i) % t->ne[0] == 0) {
-            printf("\n");
-        }
-    }
-    printf("\n");
-    double sum = 0.0;
-    for (int i = 0; i < ggml_nelements(t); i++) {
-        sum += data[i];
-    }
-    printf("sum:  %f\n\n", sum);
-}
-
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params) {
     // 1) resize to 256x256 bicubic
     Image image = resize_bicubic(img, 256, 256);
@@ -768,7 +742,6 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
     struct ggml_tensor *pos_embed_fixed = ggml_graph_get_tensor(gf, "pos_embed_fixed");
 
     ggml_backend_tensor_set(pos_embed_fixed, pos_embed_fixed_data.data(), 0, ggml_nbytes(pos_embed_fixed));
-    // print_t_f32("pos_embed_fixed", pos_embed_fixed);
 
     if (ggml_backend_graph_compute(model.backend, gf) != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "%s: ggml_backend_graph_compute() failed\n", __func__);

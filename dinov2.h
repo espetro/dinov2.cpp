@@ -91,8 +91,6 @@ struct dino_output {
     std::optional<std::vector<float>>    patch_tokens; // n_patches x hidden_size, row-major
 };
 
-void print_t_f32(const char *title, const struct ggml_tensor *t, int n);
-
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 
 ImageF dino_preprocess(const Image &img, const dino_hparams &params);
