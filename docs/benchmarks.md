@@ -167,6 +167,31 @@ For JSON output, pass `--bench-json` to the binary directly:
     --bench --bench-runs 5 --bench-warmup 1 --bench-json
 ```
 
+## Register and no-register variants
+
+Both variants appear in benchmark tables because they are separate published
+checkpoints with different representations and legitimate use cases. Register
+tokens are especially relevant to patch and dense feature inspection: the
+register-token paper reports fewer high-norm patch-token artifacts and smoother
+local feature and attention maps. No-register variants remain necessary for
+exact baseline reproduction and fair comparisons with systems or published
+results built from those checkpoints.
+
+Runtime rows should stay comparable by model size, precision, backend, input,
+and measurement method. Keep register and no-register timings in explicitly
+labeled rows or headings rather than combining them. Existing speed and memory
+tables are implementation measurements and do not establish downstream
+representation quality.
+
+The strongest consistent rationale for registers is dense-feature quality and
+local feature-map behavior. Classification and retrieval results in the official
+[DINOv2 results](https://github.com/facebookresearch/dinov2/blob/main/README.md)
+are mixed by task and model size, so they do not support a universal ranking.
+The primary [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588)
+paper provides the motivation and reports feature-map effects and selected
+downstream evaluations. Preserve the model variant, task, dataset, evaluation
+protocol, and model size when interpreting those results.
+
 ## DINOv2 vs PyTorch (historical)
 
 This is the qualitative comparison that motivated the project. Numbers

@@ -28,6 +28,22 @@ huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 The binary loads any ggml-supported quantization transparently (f16,
 q4_0 through q8_0): point `-m` at whichever GGUF you have.
 
+### Choosing a checkpoint
+
+For patch and dense feature work, start with the register-token small model:
+
+```bash
+huggingface-cli download dinov2-cpp-core/dinov2-with-registers-small-gguf --local-dir models
+```
+
+The same `dinov2-with-registers-{size}-gguf` naming pattern is available for
+`base`, `large`, and `giant`. Use the matching no-register repository when you
+need an exact baseline checkpoint or a task-specific classification or retrieval
+comparison. The register-token recommendation is based on the feature behavior
+reported in [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588)
+and should not be read as a universal accuracy ranking. For classification and
+retrieval context, see the official [DINOv2 results](https://github.com/facebookresearch/dinov2/blob/main/README.md).
+
 ## Flags
 
 Adapted from `dinov2-cli --help` (v0.3.0); see `--help` for the exact
@@ -87,6 +103,14 @@ and `topk`. `--print-embeddings -o pca.png` emits the JSON and writes
 the PNG in the same run. `--print-patch-tokens` only affects the
 embeddings JSON: on its own it selects no output mode and the run fails
 the nothing-to-do guard.
+
+For patch-token inspection, PCA maps, dense features, or object discovery,
+prefer a `with-registers` checkpoint. In the settings studied in the
+register-token paper, registers reduce high-norm patch-token artifacts and
+smooth local feature and attention maps. This is a feature-quality and
+visual-behavior recommendation, not a universal classification or retrieval ranking.
+Use the matching no-register checkpoint for exact baseline reproduction or a
+task-specific comparison.
 
 ## Batch inference
 
