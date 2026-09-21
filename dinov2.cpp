@@ -390,12 +390,13 @@ struct ggml_tensor *attn(struct ggml_tensor *cur, const float scale, const int i
         KQV = ggml_view_4d(ctx_cgraph, KQV, KQV->ne[0], KQV->ne[1], KQV->ne[2] - total_patches_to_pad, KQV->ne[3],
                            KQV->nb[1], KQV->nb[2], KQV->nb[3], 0);
 
-        cur = ggml_reshape_4d(ctx_cgraph, KQV, hidden_size, W, H, 1);
+        // the unpad view is non-contiguous across the batch dim when
+        // total_patches_to_pad > 0, so materialize before the reshape
+        cur = ggml_reshape_4d(ctx_cgraph, ggml_cont(ctx_cgraph, KQV), hidden_size, W, H, B);
     } else {
-        Q                      = ggml_reshape_3d(ctx_cgraph, Q, n_enc_head_dim, W * H, B * num_attention_heads);
-        K                      = ggml_reshape_3d(ctx_cgraph, K, n_enc_head_dim, W * H, B * num_attention_heads);
+        // keep Q/K/V 4D: ggml_mul_mat batches over dims 2 (heads) and 3 (batch)
+        // independently, which a merged (B * heads) dim 2 could not express
         V                      = ggml_cont(ctx_cgraph, ggml_permute(ctx_cgraph, V, 1, 2, 0, 3)); // transposed
-        V                      = ggml_reshape_3d(ctx_cgraph, V, W * H, n_enc_head_dim, B * num_attention_heads);
         struct ggml_tensor *KQ = ggml_mul_mat(ctx_cgraph, K, Q);
 
         // attention weights
@@ -404,7 +405,7 @@ struct ggml_tensor *attn(struct ggml_tensor *cur, const float scale, const int i
         struct ggml_tensor *KQV = ggml_mul_mat(ctx_cgraph, V, KQ_soft_max);
 
         cur = ggml_reshape_4d(ctx_cgraph, ggml_cont(ctx_cgraph, ggml_permute(ctx_cgraph, KQV, 0, 2, 1, 3)), hidden_size,
-                              W, H, 1);
+                              W, H, B);
     }
 
     cur = ggml_mul_mat(ctx_cgraph, model.tensors.at(base_layer_name + ".attention.output.dense.weight"), cur);
@@ -468,11 +469,13 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
     const int      h0                  = img_size.height / model.hparams.patch_size;
     const int      w0                  = img_size.width / model.hparams.patch_size;
     const int      num_patches         = h0 * w0;
+    const int64_t  n_batch             = params.n_batch;
 
     const float scale = 1.0f / sqrtf(static_cast<float>(n_enc_head_dim));
     // (W, H, C, B)
-    // (518, 518, 3, 1)
-    struct ggml_tensor *input = ggml_new_tensor_4d(ctx_cgraph, GGML_TYPE_F32, img_size.width, img_size.height, 3, 1);
+    // (518, 518, 3, n_batch)
+    struct ggml_tensor *input =
+        ggml_new_tensor_4d(ctx_cgraph, GGML_TYPE_F32, img_size.width, img_size.height, 3, n_batch);
     ggml_set_name(input, "input");
 
     // patch embedding
@@ -500,26 +503,34 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
     // std::cout << "cur shape " << cur->ne[0] << ", " << cur->ne[1] << ", " << cur->ne[2] << ", " << cur->ne[3]
     //         << std::endl;
     //
-    // reshape patch embeddings from (768  37  37  1) to (768  1369  1  1)
-    cur = ggml_reshape_4d(ctx_cgraph, cur, hidden_size, num_patches, 1, 1);
+    // reshape patch embeddings from (768  37  37  B) to (768  1369  1  B)
+    cur = ggml_reshape_4d(ctx_cgraph, cur, hidden_size, num_patches, 1, n_batch);
 
+    // the positional table is shared across batch elements; ggml_add
+    // broadcasts dim 3 (ne[3] == 1) over n_batch
     struct ggml_tensor *pos_embed_fixed =
         ggml_new_tensor_3d(ctx_cgraph, model.tensors.at("embeddings.position_embeddings")->type,
                            model.hparams.hidden_size, num_patches + 1, 1);
 
     ggml_set_name(pos_embed_fixed, "pos_embed_fixed");
 
-    cur = ggml_concat(ctx_cgraph, model.tensors.at("embeddings.cls_token"), cur, 1);
+    // prepend the CLS token to every batch element
+    struct ggml_tensor *cls_token_b =
+        ggml_repeat_4d(ctx_cgraph, model.tensors.at("embeddings.cls_token"), hidden_size, 1, 1, n_batch);
+    cur = ggml_concat(ctx_cgraph, cls_token_b, cur, 1);
 
     cur = ggml_add_inplace(ctx_cgraph, cur, pos_embed_fixed);
 
     if (num_register_tokens > 0) {
-        struct ggml_tensor *cls_token    = ggml_view_1d(ctx_cgraph, cur, hidden_size, 0);
+        struct ggml_tensor *cls_token =
+            ggml_view_4d(ctx_cgraph, cur, hidden_size, 1, 1, n_batch, cur->nb[1], cur->nb[2], cur->nb[3], 0);
         struct ggml_tensor *patch_tokens = ggml_view_4d(ctx_cgraph, cur, cur->ne[0], cur->ne[1] - 1, cur->ne[2],
                                                         cur->ne[3], cur->nb[1], cur->nb[2], cur->nb[3], cur->nb[1]);
-        struct ggml_tensor *cls_reg =
-            ggml_concat(ctx_cgraph, cls_token, model.tensors.at("embeddings.register_tokens"), 1);
-        cur = ggml_concat(ctx_cgraph, cls_reg, patch_tokens, 1);
+        // register tokens sit between CLS and the patch tokens, repeated per batch element
+        struct ggml_tensor *reg_tokens_b = ggml_repeat_4d(ctx_cgraph, model.tensors.at("embeddings.register_tokens"),
+                                                          hidden_size, num_register_tokens, 1, n_batch);
+        struct ggml_tensor *cls_reg      = ggml_concat(ctx_cgraph, cls_token, reg_tokens_b, 1);
+        cur                              = ggml_concat(ctx_cgraph, cls_reg, patch_tokens, 1);
     }
 
     struct ggml_tensor *inpL = cur;
@@ -597,8 +608,11 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
         cur = ggml_add_inplace(ctx_cgraph, cur, model.tensors.at("layernorm.bias"));
     }
 
-    // get the output of cls token at index 0
-    struct ggml_tensor *cls_token = ggml_view_1d(ctx_cgraph, cur, hidden_size, 0);
+    // get the output of cls token at index 0, for every batch element;
+    // ggml_cont materializes the strided view so the output is a dense
+    // (hidden, 1, 1, B) block, sliceable per image as b * hidden_size
+    struct ggml_tensor *cls_token = ggml_cont(ctx_cgraph, ggml_view_4d(ctx_cgraph, cur, hidden_size, 1, 1, cur->ne[3],
+                                                                       cur->nb[1], cur->nb[2], cur->nb[3], 0));
 
     ggml_set_output(cls_token);
     ggml_set_name(cls_token, "cls_token");
@@ -612,8 +626,10 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
     ne1 -= num_register_tokens;
     offset *= (num_register_tokens + 1);
 
-    struct ggml_tensor *patch_tokens = ggml_view_4d(ctx_cgraph, cur, cur->ne[0], ne1, cur->ne[2], cur->ne[3],
-                                                    cur->nb[1], cur->nb[2], cur->nb[3], offset);
+    // same cont treatment as cls_token: dense (hidden, n_patches, 1, B)
+    struct ggml_tensor *patch_tokens =
+        ggml_cont(ctx_cgraph, ggml_view_4d(ctx_cgraph, cur, cur->ne[0], ne1, cur->ne[2], cur->ne[3], cur->nb[1],
+                                           cur->nb[2], cur->nb[3], offset));
 
     ggml_set_output(patch_tokens);
     ggml_set_name(patch_tokens, "patch_tokens");
