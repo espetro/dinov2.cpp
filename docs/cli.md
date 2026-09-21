@@ -61,9 +61,10 @@ CLI prints a hint and exits 1.
 - **Classification** (`-c`): prints one ` > label : prob` line per top-k
   class on stdout. Combined with `--print-embeddings`, the same results
   land in the JSON `topk` array and the text lines are not printed.
-- **Embeddings JSON** (`--print-embeddings`): exactly one JSON object on
-  stdout per invocation. `--print-patch-tokens` adds a `patches` field;
-  `--l2-normalize` normalizes the vectors.
+- **Embeddings JSON** (`--print-embeddings`): one JSON object on stdout
+  for a single-shot run; the `--bench` loop ignores it and emits its
+  own bench output instead. `--print-patch-tokens` adds a `patches`
+  field; `--l2-normalize` normalizes the vectors.
 - **PCA visualization** (`-o FNAME`): writes a PNG of the patch features
   projected to RGB. Feature mode only; ignored under `-c` and `--bench`.
   The writer emits PNG bytes regardless of the file extension.
@@ -81,12 +82,12 @@ the nothing-to-do guard.
 ## Embeddings JSON schema
 
 `--print-embeddings` prints a single object. Real output for
-`dinov2-cli -m models/dinov2-small/model.gguf -i assets/tench.jpg --print-embeddings`
+`dinov2-cli -m models/model.gguf -i assets/tench.jpg --print-embeddings`
 (arrays truncated):
 
 ```json
 {
-  "model": "models/dinov2-small/model.gguf",
+  "model": "models/model.gguf",
   "image": "assets/tench.jpg",
   "n_patches": 1320,
   "hidden": 384,

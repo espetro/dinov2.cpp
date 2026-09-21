@@ -52,6 +52,16 @@ Benchmark:
 Misc:
   -h, --help            show this help message and exit
   --version             print version and exit
+
+Workflows:
+  dinov2-cli -m model.gguf -i img.jpg -c                        # classify: top-k labels
+  dinov2-cli -m model.gguf -i img.jpg --print-embeddings        # embeddings JSON on stdout
+  dinov2-cli -m model.gguf -i img.jpg --print-embeddings --print-patch-tokens
+                                                                # + per-patch tokens
+  dinov2-cli -m model.gguf -i img.jpg -o pca.png                # PCA viz of patch features
+  dinov2-cli -m model.gguf -i img.jpg --bench --bench-json      # benchmark, JSON lines
+
+docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md
 ```
 
 The optimal thread count is usually the number of physical cores; more is not always better.
