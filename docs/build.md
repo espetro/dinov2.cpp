@@ -9,38 +9,49 @@ All image decoding dependencies (stb) are vendored, so no external image librari
 ```bash
 # macOS / Linux
 cmake --preset release && cmake --build --preset release
-./build-release/bin/dinov2-cli -m ggml-model.gguf -i assets/tench.jpg -c
+./build-release/bin/dinov2-cli -m models/model.gguf -i assets/tench.jpg -c
 ```
 
 ```bash
 # Windows (Ninja)
 cmake --preset release
 cmake --build --preset release
-.\build-release\bin\dinov2-cli.exe -m ggml-model.gguf -i assets\tench.jpg -c
+.\build-release\bin\dinov2-cli.exe -m models\model.gguf -i assets\tench.jpg -c
 ```
 
-Use `-c` for classification output. Omitting the flag returns backbone PCA features (written to `pca_visual.png` by default).
+Use `-c` for classification output. Backbone PCA features are opt-in via `-o out.png` (PNG output). For the full flag reference see [cli.md](cli.md).
 
 ## CLI options
 
 ```text
 usage: ./bin/dinov2-cli [options]
 
-options:
-  -h, --help              show this help message and exit
-  -m FNAME, --model       model path (default: ../ggml-model.gguf)
-  -i FNAME, --inp         input file (default: ../assets/tench.jpg)
-  -o FNAME, --out         output file for backbone PCA features (default: pca_visual.png)
-  -k N, --topk            top k classes to print (default: 5)
-  -t N, --threads         number of threads to use during computation (default: 4)
-  -c, --classify          whether to classify the image or get backbone PCA features (default: 0)
-  -fa, --flash_attn       whether to enable flash_attn, less accurate (default: 0)
+Model:
+  -m FNAME, --model     model path (default: ../model.gguf)
+  -fa, --flash_attn     enable flash attention, less accurate (default: off)
+  -t N, --threads       number of threads to use during computation (default: 4)
+
+Input:
+  -i FNAME, --inp       input image file (default: ../assets/tench.jpg)
+  -s N, --seed          RNG seed (default: 42)
+
+Output modes:
+  -c, --classify        classify the image and print top-k labels (default: off)
+  -k N, --topk          top k classes to print (default: 5)
+  --print-embeddings    emit one JSON object on stdout with cls/pooled embeddings
+  --print-patch-tokens  include per-patch token vectors in the JSON output
+  --l2-normalize        L2-normalize emitted embedding vectors
+  -o FNAME, --out       write PCA visualization of patch features to FNAME (default: off)
 
 Benchmark:
-  --bench                 enable bench loop (default repeats=5, warmup=1); skips PCA image output
-  --bench-runs N          number of timed runs (overrides default 5 when --bench is set)
-  --bench-warmup N        number of warmup runs discarded before timing (default: 1)
-  --bench-json            emit one JSON object per line to stdout instead of markdown row
+  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output
+  --bench-runs N        number of timed runs (overrides default 5 when --bench is set)
+  --bench-warmup N      number of warmup runs discarded before timing (default: 1)
+  --bench-json          emit one JSON object per line to stdout instead of markdown row
+
+Misc:
+  -h, --help            show this help message and exit
+  --version             print version and exit
 ```
 
 The optimal thread count is usually the number of physical cores; more is not always better.
@@ -59,7 +70,7 @@ Use AMD's specialized compiler to make full use of your processor's architecture
 Compile with `-fopenmp` (add it to the compiler flags in CMakeLists.txt) to enable multithreaded runs:
 
 ```bash
-OMP_NUM_THREADS=4 ./bin/dinov2-cli -t 4 -m ggml-model.gguf -i assets/tench.jpg
+OMP_NUM_THREADS=4 ./bin/dinov2-cli -t 4 -m models/model.gguf -i assets/tench.jpg -c
 ```
 
 ## Quantization

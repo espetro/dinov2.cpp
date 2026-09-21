@@ -118,6 +118,9 @@ they may drift without notice.
   expected to be 1-3% of the mean; >5% means the runner was loaded.
 - **Numbers are placeholders.** The committed `benchmark_results.txt`
   is seed data; bench.yml will overwrite it.
+- **Embeddings flags are single-shot only.** `--print-embeddings` and
+  `--print-patch-tokens` exist for output inspection; the bench path
+  ignores them and reports timings only.
 
 ## Reproduce locally
 

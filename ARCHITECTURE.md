@@ -5,8 +5,8 @@
 `dinov2.cpp` is a from-scratch C++ port of Meta's DINOv2 vision encoder that runs on
 the [ggml](https://github.com/ggml-org/ggml) tensor library. It is **one CLI binary**
 (`dinov2-cli`) that loads any ggml-supported GGUF weight, decodes an image with
-vendored `stb_image`, runs the encoder graph, and prints either classification
-predictions or PCA-visualised patch features. It is **not** a Python wrapper, a
+vendored `stb_image`, runs the encoder graph, and prints classification
+predictions, embeddings JSON, or PCA-visualised patch features. It is **not** a Python wrapper, a
 training framework, a model converter, or a multi-backend serving system: those
 concerns live in adjacent repos (`dinov2-cpp-core` for GGUF conversion and HF
 distribution, `ggml` for backends).
@@ -66,7 +66,7 @@ graph LR
     Tool["scripts/bench.sh<br/>scripts/dinov2-to-gguf.py<br/>scripts/publish-gguf.sh"]
     Build["CMakeLists.txt<br/>CMakePresets.json<br/>src/stb_image.h<br/>src/stb_image_write.h<br/>src/doctest.h"]
     CI[".github/workflows/release.yml<br/>.github/workflows/build.yml<br/>.github/workflows/convert-and-publish-gguf.yml"]
-    Doc["README.md<br/>CONTRIBUTING.md<br/>docs/build.md<br/>docs/benchmarks.md<br/>docs/hf-publishing.md<br/>ARCHITECTURE.md<br/>RELEASE_NOTES_v0.2.0.md<br/>RELEASE_NOTES_v0.3.0.md"]
+    Doc["README.md<br/>CONTRIBUTING.md<br/>docs/cli.md<br/>docs/build.md<br/>docs/benchmarks.md<br/>docs/hf-publishing.md<br/>ARCHITECTURE.md<br/>RELEASE_NOTES_v0.2.0.md<br/>RELEASE_NOTES_v0.3.0.md"]
     Asset["assets/logo/<br/>assets/tench.jpg<br/>assets/logo.png"]
     Sub["ggml/ (submodule)"]
 
@@ -138,21 +138,32 @@ real GGUF + image that the test environment does not guarantee).
 ```text
 usage: ./bin/dinov2-cli [options]
 
-options:
-  -h, --help              show this help message and exit
-  -m FNAME, --model       model path (default: ../ggml-model-f16.gguf)
-  -i FNAME, --inp         input file (default: ../assets/tench.jpg)
-  -o FNAME, --out         output file for backbone PCA features (default: pca_visual.jpg)
-  -k N, --topk            top k classes to print (default: 5)
-  -t N, --threads         number of threads to use during computation (default: 4)
-  -c, --classify          classify the image or get backbone PCA features (default: 0)
-  -fa, --flash_attn       enable flash_attn, less accurate (default: 0)
+Model:
+  -m FNAME, --model     model path (default: ../model.gguf)
+  -fa, --flash_attn     enable flash attention, less accurate (default: off)
+  -t N, --threads       number of threads to use during computation (default: 4)
+
+Input:
+  -i FNAME, --inp       input image file (default: ../assets/tench.jpg)
+  -s N, --seed          RNG seed (default: 42)
+
+Output modes:
+  -c, --classify        classify the image and print top-k labels (default: off)
+  -k N, --topk          top k classes to print (default: 5)
+  --print-embeddings    emit one JSON object on stdout with cls/pooled embeddings
+  --print-patch-tokens  include per-patch token vectors in the JSON output
+  --l2-normalize        L2-normalize emitted embedding vectors
+  -o FNAME, --out       write PCA visualization of patch features to FNAME (default: off)
 
 Benchmark:
-  --bench                 enable bench loop (default repeats=5, warmup=1); skips PCA output
-  --bench-runs N          number of timed runs (overrides default 5 when --bench is set)
-  --bench-warmup N        number of warmup runs discarded before timing (default: 1)
-  --bench-json            emit one JSON object per line to stdout instead of a row
+  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output
+  --bench-runs N        number of timed runs (overrides default 5 when --bench is set)
+  --bench-warmup N      number of warmup runs discarded before timing (default: 1)
+  --bench-json          emit one JSON object per line to stdout instead of markdown row
+
+Misc:
+  -h, --help            show this help message and exit
+  --version             print version and exit
 ```
 
 Flow:
@@ -164,20 +175,20 @@ flowchart TD
     load_img --> load_model["dino_model_load<br/>(gguf -> ggml tensors)"]
     load_model --> alloc["ggml_gallocr_new"]
     alloc --> branch{--bench?}
-    branch -- no --> single["single-shot predict<br/>+ PCA visualisation"]
+    branch -- no --> single["single-shot predict<br/>+ JSON / top-k / PCA outputs"]
     branch -- yes --> loop["warmup x N + bench x M<br/>emit JSON or stderr row"]
     single --> cleanup["free ctx + buffer + backend"]
     loop --> cleanup
     cleanup --> exit([return 0])
 ```
 
-Every flag maps to one `dino_params` field (`dinov2.h:57-72`). `--bench-json`
-is the only stable machine-readable output; `scripts/bench.sh` parses it line
-by line.
+Every flag maps to one `dino_params` field (`dinov2.h:61-79`).
+`--print-embeddings` and `--bench-json` are the stable machine-readable
+outputs; `scripts/bench.sh` parses `--bench-json` lines one by one.
 
 ## Public API surface
 
-Verbatim from `dinov2.h` (the entire 112-line public surface):
+Verbatim from `dinov2.h` (the entire 120-line public surface):
 
 ```c++
 struct ImgSize { int width = 0; int height = 0; };
@@ -187,6 +198,8 @@ constexpr float IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
 
 uint32_t get_val_u32(const struct gguf_context *ctx, const char *key);
 const char *get_val_str(const struct gguf_context *ctx, const char *key);
+
+void l2_normalize(std::vector<float> &v);
 
 struct dino_hparams {
     uint32_t hidden_size, num_hidden_layers, num_attention_heads;
@@ -210,9 +223,12 @@ struct dino_params {
     bool enable_flash_attn = false;
     uint32_t n_threads = std::min(4u, std::thread::hardware_concurrency());
     bool classify = false;
-    std::string model = "../ggml-model-f16.gguf";
+    bool print_embeddings = false;
+    bool print_patch_tokens = false;
+    bool l2_normalize = false;
+    std::string model = "../model.gguf";
     std::string fname_inp = "../assets/tench.jpg";
-    std::string image_out = "pca_visual.jpg";
+    std::string image_out = "";     // PCA visualization is opt-in via -o
     float eps = 1e-6f;
     uint32_t bench_repeats = 0;     // --bench default: 5
     uint32_t bench_warmup = 1;
@@ -224,11 +240,12 @@ struct ggml_tensor *attn(...), *mlp(...), *swiglu_ffn(...);
 void forward_features(...), forward_head(...);
 
 struct dino_output {
-    std::optional<std::vector<uint32_t>> preds;
-    std::optional<std::vector<float>> patch_tokens;
+    std::optional<std::vector<uint32_t>> preds;        // top-k indices (classify)
+    std::optional<std::vector<float>>    pred_scores;  // top-k probabilities (classify)
+    std::optional<std::vector<float>>    cls_token;    // hidden_size floats (both modes)
+    std::optional<std::vector<float>>    pooled;       // [cls || mean(patches)] (feature)
+    std::optional<std::vector<float>>    patch_tokens; // n_patches x hidden (feature)
 };
-
-void print_t_f32(const char *title, const struct ggml_tensor *t, int n);
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 ImageF dino_preprocess(const Image &img, const dino_hparams &params);
@@ -246,7 +263,7 @@ struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgrap
 std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img,
                                           const dino_params &params, ggml_gallocr_t allocr);
 
-void print_usage(int argc, char **argv, const dino_params &params);
+void print_usage(FILE *out, int argc, char **argv, const dino_params &params);
 bool dino_params_parse(int argc, char **argv, dino_params &params);
 ```
 
@@ -288,6 +305,8 @@ Deliberately untracked by `.gitignore` and not in release archives:
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): dev harness, CMake presets, sanitizer
   builds, clang-format gate, PR guidelines.
+- [docs/cli.md](docs/cli.md): full CLI reference: flags, output modes,
+  embeddings JSON schema, workflows, exit codes.
 - [docs/build.md](docs/build.md): per-device optimisations, OpenMP, sanitizer
   presets.
 - [docs/benchmarks.md](docs/benchmarks.md): how to read the tables,
