@@ -628,6 +628,77 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (classify)") {
     CHECK(batch[1].pred_scores == single1[0].pred_scores);
 }
 
+TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attention)") {
+    ImageF img0 = make_test_image(8, 8, 1);
+    ImageF img1 = make_test_image(8, 8, 2);
+
+    dino_params params;
+    params.n_batch           = 2;
+    params.enable_flash_attn = true;
+
+    // the flash path pads the sequence to a multiple of 32; the TinyModel
+    // seq len (16 patches + 1 cls + registers = 17 or 19) always pads, so
+    // these subcases exercise the padded-KV and B>1 unpad-reshape path
+    SUBCASE("no register tokens") {
+        TinyModel m(/*n_registers=*/0);
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        // flash attention computes each (batch, head, q) row independently,
+        // so equality with single-image runs is bitwise
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].pooled == single0[0].pooled);
+        CHECK(batch[1].pooled == single1[0].pooled);
+        CHECK(batch[0].patch_tokens == single0[0].patch_tokens);
+        CHECK(batch[1].patch_tokens == single1[0].patch_tokens);
+    }
+
+    SUBCASE("with register tokens") {
+        TinyModel m(/*n_registers=*/2);
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].pooled == single0[0].pooled);
+        CHECK(batch[1].pooled == single1[0].pooled);
+        CHECK(batch[0].patch_tokens == single0[0].patch_tokens);
+        CHECK(batch[1].patch_tokens == single1[0].patch_tokens);
+    }
+
+    SUBCASE("classify") {
+        TinyModel m(/*n_registers=*/0);
+
+        params.classify = true;
+        params.topk     = 3;
+
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        REQUIRE(batch.size() == 2);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        REQUIRE(single0.size() == 1);
+        REQUIRE(single1.size() == 1);
+
+        CHECK(batch[0].cls_token == single0[0].cls_token);
+        CHECK(batch[1].cls_token == single1[0].cls_token);
+        CHECK(batch[0].preds == single0[0].preds);
+        CHECK(batch[1].preds == single1[0].preds);
+        CHECK(batch[0].pred_scores == single0[0].pred_scores);
+        CHECK(batch[1].pred_scores == single1[0].pred_scores);
+    }
+}
+
 TEST_CASE("dino_predict: single-image overload matches batch of 1") {
     TinyModel m;
     ImageF    img = make_test_image(8, 8, 3);
