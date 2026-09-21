@@ -5,11 +5,16 @@ The table below contains the actual Ubuntu benchmark artifact produced by
 measurements are deferred.
 
 The benchmark ran on `.github/workflows/bench.yml` run
-[35629935462](https://github.com/espetro/dinov2.cpp/actions/runs/35629935462)
+[35630688827](https://github.com/espetro/dinov2.cpp/actions/runs/35630688827)
 from `feat/batched-inference` at commit
-`50d5dee10da4db7b7820082da7a3ea0eaab5f346`. The workflow inputs were
+`9d0a6265ae53088e423e4c2417ec8589de181e99`. The workflow inputs were
 `variant=small`, `repeats=5`, and `threads=2`; the uploaded artifact was
-`bench-results-small-35629935462/benchmark_results.txt`.
+`bench-results-small-35630688827/benchmark_results.txt`, accompanied by
+`benchmark_provenance.txt` in the same artifact. The staged model was
+`models/dinov2-vit-small-patch14/model.gguf` with SHA-256
+`b7ca009aa416f6be85ea95363f4ef13d3c139999f96ca3fd47226849afb712e6`. The
+artifact recorded `workflow=bench.yml`, `run_id=35630688827`,
+`run_attempt=1`, and the same commit SHA.
 
 ## Forward pass wall time (CPU backend)
 
@@ -18,7 +23,7 @@ and PCA visualization. Numbers in milliseconds (lower is better).
 
 | Platform        | Arch   | ggml | Model  | mean (ms) | stddev (ms) | min (ms) | max (ms) | Peak RSS |
 |-----------------|--------|------|--------|----------:|------------:|---------:|---------:|---------:|
-| ubuntu-latest   | x86_64 | cpu  | ViT-S  |     212.8 |         9.1 |      204 |      225 |   104 MB |
+| ubuntu-latest   | x86_64 | cpu  | ViT-S  |     255.0 |         9.1 |      249 |      271 |   104 MB |
 
 This is the only current platform measurement. Other platform rows remain
 deferred, and no quantization-specific benchmark was run.
