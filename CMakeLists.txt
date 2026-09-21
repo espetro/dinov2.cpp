@@ -78,6 +78,7 @@ if (DINOV2_BUILD_TESTS)
     add_test(NAME test_dinov2 COMMAND test_dinov2)
 
     add_executable(test_cli tests/test_cli.cpp)
+    target_link_libraries(test_cli PRIVATE ggml)
     dinov2_target_flags(test_cli)
     add_test(NAME test_cli COMMAND test_cli $<TARGET_FILE:dinov2-cli>)
 endif ()

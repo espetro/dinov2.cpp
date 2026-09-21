@@ -1,5 +1,9 @@
+#include "ggml.h"
+#include "gguf.h"
+
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <string>
 #ifdef _WIN32
@@ -65,6 +69,34 @@ static int run_cli(const std::string &cli, const std::vector<std::string> &args,
 #endif
 }
 
+static bool write_minimal_gguf(const std::string &path, bool add_register_tensor) {
+    gguf_context *gguf = gguf_init_empty();
+    gguf_set_val_u32(gguf, "hidden_size", 4);
+    gguf_set_val_u32(gguf, "num_hidden_layers", 0);
+    gguf_set_val_u32(gguf, "num_attention_heads", 1);
+    gguf_set_val_u32(gguf, "patch_size", 14);
+    gguf_set_val_u32(gguf, "img_size", 224);
+    gguf_set_val_u32(gguf, "ftype", 1);
+
+    ggml_context *tensor_ctx = nullptr;
+    if (add_register_tensor) {
+        ggml_init_params init_params = {ggml_tensor_overhead() * 2 + sizeof(float) * 4, nullptr, false};
+        tensor_ctx                   = ggml_init(init_params);
+        ggml_tensor *register_tokens = ggml_new_tensor_2d(tensor_ctx, GGML_TYPE_F32, 4, 1);
+        ggml_set_name(register_tokens, "embeddings.register_tokens");
+        static const float values[] = {0.0f, 0.1f, 0.2f, 0.3f};
+        std::memcpy(register_tokens->data, values, sizeof(values));
+        gguf_add_tensor(gguf, register_tokens);
+    }
+
+    const bool written = gguf_write_to_file(gguf, path.c_str(), false);
+    if (tensor_ctx) {
+        ggml_free(tensor_ctx);
+    }
+    gguf_free(gguf);
+    return written;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -97,19 +129,35 @@ int main(int argc, char **argv) {
         }
     }
 
-    // A malformed or model-less classification request must fail as a loader
-    // error, not reach a graph access or process assertion.
-    const std::string invalid_model = "/tmp/dinov2-cli-test-invalid.gguf";
-    {
-        std::ofstream file(invalid_model, std::ios::binary);
-        file << "not a GGUF model";
+    // A valid backbone-only GGUF must fail classification during loader
+    // preflight, before any missing classifier tensor can be accessed.
+    const std::string backbone_model = "/tmp/dinov2-cli-test-backbone.gguf";
+    if (!write_minimal_gguf(backbone_model, false)) {
+        return 1;
     }
     std::string loader_stdout;
     std::string loader_stderr;
-    const int   loader_status = run_cli(cli, {"-m", invalid_model, "-c"}, loader_stdout, loader_stderr);
-    std::remove(invalid_model.c_str());
+    const int   loader_status = run_cli(cli, {"-m", backbone_model, "-c"}, loader_stdout, loader_stderr);
+    std::remove(backbone_model.c_str());
     if (loader_status != 1 || !loader_stdout.empty() ||
-        loader_stderr.find("failed to load model") == std::string::npos ||
+        loader_stderr.find("num_register_tokens    = 0") == std::string::npos ||
+        loader_stderr.find("no non-zero num_classes metadata") == std::string::npos ||
+        loader_stderr.find("assert") != std::string::npos) {
+        return 1;
+    }
+
+    // A register tensor without its count metadata is ambiguous and must not
+    // be loaded as a zero-register backbone.
+    const std::string inconsistent_model = "/tmp/dinov2-cli-test-registers.gguf";
+    if (!write_minimal_gguf(inconsistent_model, true)) {
+        return 1;
+    }
+    loader_stdout.clear();
+    loader_stderr.clear();
+    const int inconsistent_status = run_cli(cli, {"-m", inconsistent_model, "-c"}, loader_stdout, loader_stderr);
+    std::remove(inconsistent_model.c_str());
+    if (inconsistent_status != 1 || !loader_stdout.empty() ||
+        loader_stderr.find("missing num_register_tokens metadata") == std::string::npos ||
         loader_stderr.find("assert") != std::string::npos) {
         return 1;
     }

@@ -264,12 +264,26 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     hparams.num_hidden_layers   = get_val_u32(gguf_ctx, std::string("num_hidden_layers").c_str());
     hparams.num_attention_heads = get_val_u32(gguf_ctx, std::string("num_attention_heads").c_str());
 
-    hparams.patch_size = get_val_u32(gguf_ctx, std::string("patch_size").c_str());
-    hparams.img_size   = get_val_u32(gguf_ctx, std::string("img_size").c_str());
-    hparams.ftype      = get_val_u32(gguf_ctx, std::string("ftype").c_str());
+    hparams.patch_size             = get_val_u32(gguf_ctx, std::string("patch_size").c_str());
+    hparams.img_size               = get_val_u32(gguf_ctx, std::string("img_size").c_str());
+    hparams.ftype                  = get_val_u32(gguf_ctx, std::string("ftype").c_str());
+    const auto num_register_tokens = get_val_u32_optional(gguf_ctx, "num_register_tokens");
+    const bool has_register_tokens = ggml_get_tensor(tmp_ctx, "embeddings.register_tokens") != nullptr;
+    if (has_register_tokens && !num_register_tokens) {
+        fprintf(stderr, "%s: GGUF has embeddings.register_tokens but is missing num_register_tokens metadata\n",
+                __func__);
+        gguf_free(gguf_ctx);
+        return false;
+    }
+    if (has_register_tokens != (num_register_tokens && *num_register_tokens > 0)) {
+        fprintf(stderr, "%s: GGUF register-token metadata and embeddings.register_tokens tensor are inconsistent\n",
+                __func__);
+        gguf_free(gguf_ctx);
+        return false;
+    }
     // Backbone-only converters may omit this metadata because zero registers is
     // the ordinary DINOv2 default. Keep loading feature mode in that case.
-    hparams.num_register_tokens = get_val_u32_optional(gguf_ctx, "num_register_tokens").value_or(0);
+    hparams.num_register_tokens = num_register_tokens.value_or(0);
 
     const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
