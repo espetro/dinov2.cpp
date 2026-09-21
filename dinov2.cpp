@@ -599,16 +599,16 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
 
 void forward_head(const ImgSize img_size, struct ggml_cgraph *graph, struct ggml_context *ctx_cgraph,
                   const dino_model &model, const dino_params &params) {
-    const int32_t n_img_embd = model.hparams.n_img_embd();
-
     struct ggml_tensor *cls_token    = ggml_graph_get_tensor(graph, "cls_token");
     struct ggml_tensor *patch_tokens = ggml_graph_get_tensor(graph, "patch_tokens");
     // classification head
 
     struct ggml_tensor *pooled_patch_tokens =
         ggml_sum_rows(ctx_cgraph, ggml_cont(ctx_cgraph, ggml_permute(ctx_cgraph, patch_tokens, 1, 0, 2, 3)));
+    // divide by the actual pooled token count, not the model's native grid
+    // (they differ when the input isn't the GGUF-declared img_size)
     pooled_patch_tokens =
-        ggml_scale_inplace(ctx_cgraph, pooled_patch_tokens, 1.0f / static_cast<float>(n_img_embd * n_img_embd));
+        ggml_scale_inplace(ctx_cgraph, pooled_patch_tokens, 1.0f / static_cast<float>(patch_tokens->ne[1]));
 
     struct ggml_tensor *cur =
         ggml_concat(ctx_cgraph, cls_token, ggml_permute(ctx_cgraph, pooled_patch_tokens, 1, 0, 2, 3), 0);
