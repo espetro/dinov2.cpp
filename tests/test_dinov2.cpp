@@ -558,6 +558,33 @@ TEST_CASE("dino_params_parse: --batch sets n_batch") {
     CHECK(p.n_batch == 4);
 }
 
+TEST_CASE("dino_params: fnames_inp defaults to the bundled sample image") {
+    dino_params p;
+    REQUIRE(p.fnames_inp.size() == 1);
+    CHECK(p.fnames_inp[0] == "../assets/tench.jpg");
+}
+
+TEST_CASE("dino_params_parse: repeated -i and comma lists collect images") {
+    dino_params p;
+    char        a0[] = "prog", a1[] = "-i", a2[] = "a.jpg";
+    char        a3[] = "-i", a4[] = "b.jpg, c.jpg ,d.jpg";
+    char       *argv[] = {a0, a1, a2, a3, a4};
+    CHECK(dino_params_parse(5, argv, p));
+    REQUIRE(p.fnames_inp.size() == 4);
+    CHECK(p.fnames_inp[0] == "a.jpg");
+    CHECK(p.fnames_inp[1] == "b.jpg");
+    CHECK(p.fnames_inp[2] == "c.jpg");
+    CHECK(p.fnames_inp[3] == "d.jpg");
+}
+
+TEST_CASE("dino_params_parse: -i with only empty tokens yields no images") {
+    dino_params p;
+    char        a0[] = "prog", a1[] = "-i", a2[] = " , ,";
+    char       *argv[] = {a0, a1, a2};
+    CHECK(dino_params_parse(3, argv, p));
+    CHECK(p.fnames_inp.empty());
+}
+
 TEST_CASE("dino_predict: batch of 2 equals two single-image runs") {
     ImageF img0 = make_test_image(8, 8, 1);
     ImageF img1 = make_test_image(8, 8, 2);

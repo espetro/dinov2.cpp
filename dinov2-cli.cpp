@@ -81,8 +81,8 @@ static void print_embeddings_json(const dino_params &params, const dino_model &m
                                   const dino_output &output) {
     const int n_patches = (img_f.ny / model.hparams.patch_size) * (img_f.nx / model.hparams.patch_size);
     fprintf(stdout, "{\"model\":\"%s\",\"image\":\"%s\",\"n_patches\":%d,\"hidden\":%u",
-            json_escape(model_label_from_path(params.model)).c_str(), json_escape(params.fname_inp).c_str(), n_patches,
-            model.hparams.hidden_size);
+            json_escape(model_label_from_path(params.model)).c_str(), json_escape(params.fnames_inp.front()).c_str(),
+            n_patches, model.hparams.hidden_size);
     if (output.cls_token) {
         fprintf(stdout, ",\"cls\":[");
         print_float_array(*output.cls_token);
@@ -125,6 +125,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (params.fnames_inp.empty()) {
+        fprintf(stderr, "%s: no input images; pass at least one -i FNAME\n", __func__);
+        return 1;
+    }
+
     // nothing-to-do guard: no output mode selected
     if (!params.classify && !params.print_embeddings && params.image_out.empty() && params.bench_repeats == 0) {
         fprintf(stderr,
@@ -140,12 +145,12 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%s: seed = %d\n", __func__, params.seed);
 
     // load the image
-    Image img = load_image(params.fname_inp);
+    Image img = load_image(params.fnames_inp.front());
     if (img.data.empty()) {
-        fprintf(stderr, "%s: failed to load image from '%s'\n", __func__, params.fname_inp.c_str());
+        fprintf(stderr, "%s: failed to load image from '%s'\n", __func__, params.fnames_inp.front().c_str());
         return 1;
     }
-    fprintf(stderr, "%s: loaded image '%s' (%d x %d)\n", __func__, params.fname_inp.c_str(), img.nx, img.ny);
+    fprintf(stderr, "%s: loaded image '%s' (%d x %d)\n", __func__, params.fnames_inp.front().c_str(), img.nx, img.ny);
 
     // load the model
     if (!dino_model_load({img.nx, img.ny}, params.model, model, params)) {

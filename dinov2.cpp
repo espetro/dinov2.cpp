@@ -694,18 +694,21 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
             params.n_threads);
     fprintf(out, "\n");
     fprintf(out, "Input:\n");
-    fprintf(out, "  -i FNAME, --inp       input image file (default: %s)\n", params.fname_inp.c_str());
+    fprintf(out, "  -i FNAME, --inp       input image file; repeat or comma-separate for several\n");
+    fprintf(out, "                        (default: %s)\n",
+            params.fnames_inp.empty() ? "" : params.fnames_inp.front().c_str());
     fprintf(out, "  -s N, --seed          RNG seed (default: %d)\n", params.seed);
-    fprintf(out, "  --batch N             max images per forward pass (default: %d, max: %d)\n", params.n_batch,
-            DINO_MAX_BATCH);
+    fprintf(out, "  --batch N             max images per forward pass; inputs run in chunks of N\n");
+    fprintf(out, "                        (default: %d, max: %d)\n", params.n_batch, DINO_MAX_BATCH);
     fprintf(out, "\n");
     fprintf(out, "Output modes:\n");
-    fprintf(out, "  -c, --classify        classify the image and print top-k labels (default: off)\n");
+    fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
     fprintf(out, "  -k N, --topk          top k classes to print (default: %d)\n", params.topk);
-    fprintf(out, "  --print-embeddings    emit one JSON object on stdout with cls/pooled embeddings\n");
+    fprintf(out, "  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)\n");
     fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the JSON output\n");
     fprintf(out, "  --l2-normalize        L2-normalize emitted embedding vectors\n");
-    fprintf(out, "  -o FNAME, --out       write PCA visualization of patch features to FNAME (default: off)\n");
+    fprintf(out, "  -o FNAME, --out       write PCA visualization of patch features to FNAME; with multiple\n");
+    fprintf(out, "                        inputs FNAME is a directory for <input-stem>.pca.png files\n");
     fprintf(out, "\n");
     fprintf(out, "Benchmark:\n");
     fprintf(out, "  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
@@ -723,10 +726,31 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --print-embeddings        # embeddings JSON on stdout\n");
     fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --print-embeddings --print-patch-tokens\n");
     fprintf(out, "                                                                # + per-patch tokens\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i a.jpg -i b.jpg --batch 2 --print-embeddings\n");
+    fprintf(out, "                                                                # batch: one JSON line per image\n");
     fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg -o pca.png                # PCA viz of patch features\n");
     fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --bench --bench-json      # benchmark, JSON lines\n");
     fprintf(out, "\n");
     fprintf(out, "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n");
+}
+
+// Append a comma-separated list of paths to out; tokens are whitespace-trimmed
+// and empty tokens are dropped (same convention as parity_check.py's --image).
+static void append_csv_paths(std::vector<std::string> &out, const std::string &value) {
+    size_t pos = 0;
+    while (pos <= value.size()) {
+        const size_t      comma = value.find(',', pos);
+        const std::string tok   = value.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+        const size_t      first = tok.find_first_not_of(" \t\r\n");
+        const size_t      last  = tok.find_last_not_of(" \t\r\n");
+        if (first != std::string::npos) {
+            out.push_back(tok.substr(first, last - first + 1));
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        pos = comma + 1;
+    }
 }
 
 bool dino_params_parse(int argc, char **argv, dino_params &params) {
@@ -741,6 +765,9 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
         return argv[++i];
     };
 
+    // the first -i replaces the default image; later -i flags append
+    bool first_inp = true;
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -749,7 +776,11 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
         } else if (arg == "-m" || arg == "--model") {
             params.model = next_value(i);
         } else if (arg == "-i" || arg == "--inp") {
-            params.fname_inp = next_value(i);
+            if (first_inp) {
+                params.fnames_inp.clear();
+                first_inp = false;
+            }
+            append_csv_paths(params.fnames_inp, next_value(i));
         } else if (arg == "--batch") {
             const long v = std::stol(next_value(i));
             if (!dino_batch_size_valid(v)) {
