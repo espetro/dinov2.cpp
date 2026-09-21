@@ -664,6 +664,10 @@ struct ggml_cgraph *build_graph(const ImgSize img_size, struct ggml_context *ctx
     return gf;
 }
 
+bool dino_batch_size_valid(int64_t n) {
+    return n >= 1 && n <= (int64_t)DINO_MAX_BATCH;
+}
+
 void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "usage: %s [options]\n", argv[0]);
     fprintf(out, "\n");
@@ -676,6 +680,8 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "Input:\n");
     fprintf(out, "  -i FNAME, --inp       input image file (default: %s)\n", params.fname_inp.c_str());
     fprintf(out, "  -s N, --seed          RNG seed (default: %d)\n", params.seed);
+    fprintf(out, "  --batch N             max images per forward pass (default: %d, max: %d)\n", params.n_batch,
+            DINO_MAX_BATCH);
     fprintf(out, "\n");
     fprintf(out, "Output modes:\n");
     fprintf(out, "  -c, --classify        classify the image and print top-k labels (default: off)\n");
@@ -728,6 +734,14 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             params.model = next_value(i);
         } else if (arg == "-i" || arg == "--inp") {
             params.fname_inp = next_value(i);
+        } else if (arg == "--batch") {
+            const long v = std::stol(next_value(i));
+            if (!dino_batch_size_valid(v)) {
+                fprintf(stderr, "error: --batch must be between 1 and %u, got %ld\n", DINO_MAX_BATCH, v);
+                print_usage(stderr, argc, argv, params);
+                exit(1);
+            }
+            params.n_batch = (uint32_t)v;
         } else if (arg == "-o" || arg == "--out") {
             params.image_out = next_value(i);
         } else if (arg == "-t" || arg == "--threads") {

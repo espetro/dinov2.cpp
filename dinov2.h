@@ -58,9 +58,16 @@ struct dino_model {
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
+// Maximum accepted value for dino_params::n_batch / the --batch flag.
+constexpr uint32_t DINO_MAX_BATCH = 64;
+
+// Valid range for a batch size: 1 <= n <= DINO_MAX_BATCH.
+bool dino_batch_size_valid(int64_t n);
+
 struct dino_params {
     uint32_t    seed               = 42;
     uint32_t    topk               = 5;
+    uint32_t    n_batch            = 1; // max images per forward pass
     bool        enable_flash_attn  = false;
     uint32_t    n_threads          = std::min(4u, std::thread::hardware_concurrency());
     bool        classify           = false;
