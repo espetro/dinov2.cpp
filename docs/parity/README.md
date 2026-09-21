@@ -56,7 +56,10 @@ CLI's grid. For token-count parity use `--preprocess hf` (same recipe). Even
 then a small residual delta is expected when the input is downscaled: HF's
 `resample: 3` is PIL bicubic with a support-scaled (antialiased) kernel,
 while the CLI uses Catmull-Rom (OpenCV `INTER_CUBIC`) without a downscale
-prefilter.
+prefilter. Measured residual on `assets/tench.jpg` (612x408, upscaled to
+the 256 shortest edge) against `facebook/dinov2-small` backbone under
+`AutoImageProcessor` defaults: 256 patch tokens on both sides, CLS cosine
+0.996245, pooled cosine 0.996995.
 
 ## Runs
 
