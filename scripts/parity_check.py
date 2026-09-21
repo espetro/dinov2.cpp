@@ -108,12 +108,22 @@ def run_cli_json(cli: Path, gguf: Path, image: Path, extra: Sequence[str]) -> di
         raise RuntimeError(f"dinov2-cli timed out after 300s: {' '.join(cmd)}")
     if proc.returncode != 0:
         raise RuntimeError(f"dinov2-cli exited {proc.returncode}: {' '.join(cmd)}\nstderr:\n{proc.stderr}")
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"failed to parse dinov2-cli stdout as JSON: {exc}\nstdout head: {proc.stdout[:300]}\nstderr:\n{proc.stderr}"
-        )
+    # The CLI emits JSONL for embeddings. Classification additionally prints
+    # human-readable top-k rows, so select the one JSON object and retain the
+    # existing single-image contract without changing the CLI output format.
+    records = []
+    for line in proc.stdout.splitlines():
+        if not line.lstrip().startswith("{"):
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"failed to parse dinov2-cli JSONL: {exc}\nstdout head: {proc.stdout[:300]}\nstderr:\n{proc.stderr}"
+            )
+    if len(records) != 1:
+        raise RuntimeError(f"expected one JSON object from dinov2-cli, got {len(records)}")
+    return records[0]
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> float:

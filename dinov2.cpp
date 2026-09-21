@@ -18,6 +18,7 @@
 #include <vector>
 #include <cinttypes>
 #include <algorithm>
+#include <charconv>
 #include <iostream>
 
 #ifdef GGML_USE_CUDA
@@ -62,6 +63,14 @@ const char *get_val_str(const struct gguf_context *ctx, const char *key) {
     const int64_t key_id = gguf_find_key(ctx, key);
     assert(key_id >= 0);
     return gguf_get_val_str(ctx, key_id);
+}
+
+static std::optional<uint32_t> get_val_u32_optional(const struct gguf_context *ctx, const char *key) {
+    const int64_t key_id = gguf_find_key(ctx, key);
+    if (key_id < 0) {
+        return std::nullopt;
+    }
+    return gguf_get_val_u32(ctx, key_id);
 }
 
 //
@@ -255,10 +264,42 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     hparams.num_hidden_layers   = get_val_u32(gguf_ctx, std::string("num_hidden_layers").c_str());
     hparams.num_attention_heads = get_val_u32(gguf_ctx, std::string("num_attention_heads").c_str());
 
-    hparams.patch_size          = get_val_u32(gguf_ctx, std::string("patch_size").c_str());
-    hparams.img_size            = get_val_u32(gguf_ctx, std::string("img_size").c_str());
-    hparams.ftype               = get_val_u32(gguf_ctx, std::string("ftype").c_str());
-    hparams.num_register_tokens = get_val_u32(gguf_ctx, std::string("num_register_tokens").c_str());
+    hparams.patch_size             = get_val_u32(gguf_ctx, std::string("patch_size").c_str());
+    hparams.img_size               = get_val_u32(gguf_ctx, std::string("img_size").c_str());
+    hparams.ftype                  = get_val_u32(gguf_ctx, std::string("ftype").c_str());
+    const auto num_register_tokens = get_val_u32_optional(gguf_ctx, "num_register_tokens");
+    const bool has_register_tokens = ggml_get_tensor(tmp_ctx, "embeddings.register_tokens") != nullptr;
+    if (has_register_tokens && !num_register_tokens) {
+        fprintf(stderr, "%s: GGUF has embeddings.register_tokens but is missing num_register_tokens metadata\n",
+                __func__);
+        gguf_free(gguf_ctx);
+        return false;
+    }
+    if (has_register_tokens != (num_register_tokens && *num_register_tokens > 0)) {
+        fprintf(stderr, "%s: GGUF register-token metadata and embeddings.register_tokens tensor are inconsistent\n",
+                __func__);
+        gguf_free(gguf_ctx);
+        return false;
+    }
+    // Backbone-only converters may omit this metadata because zero registers is
+    // the ordinary DINOv2 default. Keep loading feature mode in that case.
+    hparams.num_register_tokens = num_register_tokens.value_or(0);
+    if (has_register_tokens && hparams.num_register_tokens > 0) {
+        const ggml_tensor *register_tensor = ggml_get_tensor(tmp_ctx, "embeddings.register_tokens");
+        const bool         shape_matches   = register_tensor->ne[0] == hparams.hidden_size &&
+                                   register_tensor->ne[1] == hparams.num_register_tokens &&
+                                   register_tensor->ne[2] == 1 && register_tensor->ne[3] == 1;
+        if (!shape_matches) {
+            fprintf(stderr,
+                    "%s: embeddings.register_tokens has shape [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64
+                    "] but expected "
+                    "[%u, %u, 1, 1] (hidden_size, num_register_tokens, singleton trailing dimensions)\n",
+                    __func__, register_tensor->ne[0], register_tensor->ne[1], register_tensor->ne[2],
+                    register_tensor->ne[3], hparams.hidden_size, hparams.num_register_tokens);
+            gguf_free(gguf_ctx);
+            return false;
+        }
+    }
 
     const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
@@ -272,12 +313,38 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     fprintf(stderr, "%s: qntvr                  = %d\n", __func__, qntvr);
 
     if (params.classify) {
-        hparams.num_classes = get_val_u32(gguf_ctx, std::string("num_classes").c_str());
+        const auto num_classes = get_val_u32_optional(gguf_ctx, "num_classes");
+        if (!num_classes || *num_classes == 0) {
+            fprintf(stderr,
+                    "%s: classification requested but GGUF has no non-zero num_classes metadata; "
+                    "backbone-only models support feature mode only\n",
+                    __func__);
+            gguf_free(gguf_ctx);
+            return false;
+        }
+        hparams.num_classes = *num_classes;
         fprintf(stderr, "%s: num_classes            = %d\n", __func__, hparams.num_classes);
-        // read id2label dictionary into an ordered map (sort of an OrderedDict)
-        int num_labels = get_val_u32(gguf_ctx, std::string("num_classes").c_str());
-        for (int i = 0; i < num_labels; ++i) {
-            model.hparams.id2label[i] = get_val_str(gguf_ctx, std::to_string(i).c_str());
+
+        const auto has_tensor = [&](const char *name) { return ggml_get_tensor(tmp_ctx, name) != nullptr; };
+        if (!has_tensor("classifier.weight") || !has_tensor("classifier.bias")) {
+            fprintf(stderr,
+                    "%s: classification requested but GGUF is missing classifier.weight or classifier.bias; "
+                    "backbone-only models support feature mode only\n",
+                    __func__);
+            gguf_free(gguf_ctx);
+            return false;
+        }
+
+        // Read id2label dictionary into an ordered map. A classifier without
+        // labels is not safe to present as a classification-capable model.
+        for (uint32_t i = 0; i < hparams.num_classes; ++i) {
+            const std::string key = std::to_string(i);
+            if (gguf_find_key(gguf_ctx, key.c_str()) < 0) {
+                fprintf(stderr, "%s: classification GGUF is missing label metadata for class %u\n", __func__, i);
+                gguf_free(gguf_ctx);
+                return false;
+            }
+            model.hparams.id2label[static_cast<int>(i)] = get_val_str(gguf_ctx, key.c_str());
         }
     }
 
@@ -684,37 +751,119 @@ bool dino_batch_size_valid(int64_t n) {
     return n >= 1 && n <= (int64_t)DINO_MAX_BATCH;
 }
 
+bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
+                             uint32_t patch_count, bool include_patches, bool normalized, std::string &error) {
+    if (!output.cls_token || output.cls_token->size() != hidden_size) {
+        error = "CLS vector has an unexpected length";
+        return false;
+    }
+    if (!output.pooled || output.pooled->size() != static_cast<size_t>(2) * hidden_size) {
+        error = "pooled vector has an unexpected length";
+        return false;
+    }
+    if (include_patches &&
+        (!output.patch_tokens || output.patch_tokens->size() != static_cast<size_t>(patch_count) * hidden_size)) {
+        error = "patch vectors have an unexpected length";
+        return false;
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        error = "cannot open output file";
+        return false;
+    }
+
+    const uint32_t flags     = (include_patches ? 1u : 0u) | (normalized ? 2u : 0u);
+    auto           write_u16 = [&](uint16_t value) {
+        const unsigned char bytes[2] = {static_cast<unsigned char>(value & 0xffu),
+                                        static_cast<unsigned char>((value >> 8) & 0xffu)};
+        file.write(reinterpret_cast<const char *>(bytes), sizeof(bytes));
+    };
+    auto write_u32 = [&](uint32_t value) {
+        const unsigned char bytes[4] = {
+            static_cast<unsigned char>(value & 0xffu), static_cast<unsigned char>((value >> 8) & 0xffu),
+            static_cast<unsigned char>((value >> 16) & 0xffu), static_cast<unsigned char>((value >> 24) & 0xffu)};
+        file.write(reinterpret_cast<const char *>(bytes), sizeof(bytes));
+    };
+    auto write_float = [&](float value) {
+        uint32_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(value));
+        std::memcpy(&bits, &value, sizeof(bits));
+        write_u32(bits);
+    };
+
+    const char magic[8] = {'D', '2', 'E', 'M', 'B', '\0', '\0', '\0'};
+    file.write(magic, sizeof(magic));
+    write_u16(1);
+    write_u16(32);
+    write_u32(hidden_size);
+    write_u32(2 * hidden_size);
+    write_u32(include_patches ? patch_count : 0);
+    write_u32(flags);
+    write_u32(0);
+
+    for (float value : *output.cls_token) {
+        write_float(value);
+    }
+    for (float value : *output.pooled) {
+        write_float(value);
+    }
+    if (include_patches) {
+        for (float value : *output.patch_tokens) {
+            write_float(value);
+        }
+    }
+
+    if (!file) {
+        error = "write failed";
+        return false;
+    }
+    file.flush();
+    if (!file) {
+        error = "flush failed";
+        return false;
+    }
+    file.close();
+    if (!file) {
+        error = "close failed";
+        return false;
+    }
+    return true;
+}
+
 void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "usage: %s [options]\n", argv[0]);
     fprintf(out, "\n");
     fprintf(out, "Model:\n");
     fprintf(out, "  -m FNAME, --model     model path (default: %s)\n", params.model.c_str());
     fprintf(out, "  -fa, --flash_attn     enable flash attention, less accurate (default: off)\n");
-    fprintf(out, "  -t N, --threads       number of threads to use during computation (default: %d)\n",
+    fprintf(out, "  -t N, --threads       number of threads to use during computation, 1 or greater (default: %d)\n",
             params.n_threads);
     fprintf(out, "\n");
     fprintf(out, "Input:\n");
     fprintf(out, "  -i FNAME, --inp       input image file; repeat or comma-separate for several\n");
     fprintf(out, "                        (default: %s)\n",
             params.fnames_inp.empty() ? "" : params.fnames_inp.front().c_str());
-    fprintf(out, "  -s N, --seed          RNG seed (default: %d)\n", params.seed);
+    fprintf(out, "  -s N, --seed          signed 32-bit RNG seed (default: %d)\n", params.seed);
     fprintf(out, "  --batch N             max images per forward pass; inputs run in chunks of N\n");
     fprintf(out, "                        (default: %d, max: %d)\n", params.n_batch, DINO_MAX_BATCH);
     fprintf(out, "\n");
     fprintf(out, "Output modes:\n");
     fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
-    fprintf(out, "  -k N, --topk          top k classes to print (default: %d)\n", params.topk);
+    fprintf(out, "  -k N, --topk          top k classes to print, 1 through model class count (default: %d)\n",
+            params.topk);
     fprintf(out, "  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)\n");
-    fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the JSON output\n");
+    fprintf(out, "  --embeddings-binary   write preview binary embeddings to -o (unstable format)\n");
+    fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the embedding output\n");
     fprintf(out, "  --l2-normalize        L2-normalize emitted embedding vectors\n");
-    fprintf(out, "  -o FNAME, --out       write PCA visualization of patch features to FNAME; with multiple\n");
-    fprintf(out, "                        inputs FNAME is a directory for <input-stem>.pca.png files\n");
+    fprintf(out, "  -o FNAME, --out       write PCA output to FNAME, or binary embeddings file/directory\n");
+    fprintf(out, "                        output when used with --embeddings-binary\n");
     fprintf(out, "\n");
     fprintf(out, "Benchmark:\n");
     fprintf(out, "  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
-    fprintf(out, "  --bench-runs N        number of timed runs (overrides default 5 when --bench is set)\n");
-    fprintf(out, "  --bench-warmup N      number of warmup runs discarded before timing (default: %u)\n",
-            params.bench_warmup);
+    fprintf(out,
+            "  --bench-runs N        number of timed runs, 1 or greater (overrides default 5 when --bench is set)\n");
+    fprintf(out, "  --bench-warmup N      number of warmup runs, 0 or greater (default: %u)\n", params.bench_warmup);
     fprintf(out, "  --bench-json          emit one JSON object per line to stdout instead of markdown row\n");
     fprintf(out, "\n");
     fprintf(out, "Misc:\n");
@@ -753,6 +902,37 @@ static void append_csv_paths(std::vector<std::string> &out, const std::string &v
     }
 }
 
+template <typename T> static bool parse_integer(const char *value, T &result) {
+    const char *first = value;
+    if (*first == '+') {
+        ++first;
+        if (*first == '+' || *first == '-') {
+            return false;
+        }
+    } else if (*first == '-' && (first[1] == '+' || first[1] == '-')) {
+        return false;
+    }
+    if (*first == '\0') {
+        return false;
+    }
+
+    const char *last = value + std::strlen(value);
+    T           parsed{};
+    const auto  conversion = std::from_chars(first, last, parsed, 10);
+    if (conversion.ec != std::errc() || conversion.ptr != last) {
+        return false;
+    }
+    result = parsed;
+    return true;
+}
+
+[[noreturn]] static void numeric_parse_error(const char *option, const char *value, const char *range, int argc,
+                                             char **argv, const dino_params &params) {
+    fprintf(stderr, "error: %s has invalid value '%s' (expected %s)\n", option, value, range);
+    print_usage(stderr, argc, argv, params);
+    exit(1);
+}
+
 bool dino_params_parse(int argc, char **argv, dino_params &params) {
     // consume argv[++i] as the value for a flag; a trailing flag with no
     // value is a usage error, not a read past argv[argc - 1]
@@ -772,7 +952,12 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
         std::string arg = argv[i];
 
         if (arg == "-s" || arg == "--seed") {
-            params.seed = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed)) {
+                numeric_parse_error(arg.c_str(), value, "a signed 32-bit integer", argc, argv, params);
+            }
+            params.seed = parsed;
         } else if (arg == "-m" || arg == "--model") {
             params.model = next_value(i);
         } else if (arg == "-i" || arg == "--inp") {
@@ -782,19 +967,29 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             }
             append_csv_paths(params.fnames_inp, next_value(i));
         } else if (arg == "--batch") {
-            const long v = std::stol(next_value(i));
-            if (!dino_batch_size_valid(v)) {
-                fprintf(stderr, "error: --batch must be between 1 and %u, got %ld\n", DINO_MAX_BATCH, v);
-                print_usage(stderr, argc, argv, params);
-                exit(1);
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || !dino_batch_size_valid(parsed)) {
+                const std::string range = "an integer from 1 through " + std::to_string(DINO_MAX_BATCH);
+                numeric_parse_error(arg.c_str(), value, range.c_str(), argc, argv, params);
             }
-            params.n_batch = (uint32_t)v;
+            params.n_batch = static_cast<uint32_t>(parsed);
         } else if (arg == "-o" || arg == "--out") {
             params.image_out = next_value(i);
         } else if (arg == "-t" || arg == "--threads") {
-            params.n_threads = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.n_threads = static_cast<uint32_t>(parsed);
         } else if (arg == "-k" || arg == "--topk") {
-            params.topk = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.topk = static_cast<uint32_t>(parsed);
         } else if (arg == "-fa" || arg == "--flash_attn") {
             params.enable_flash_attn = true;
         } else if (arg == "-c" || arg == "--classify") {
@@ -806,13 +1001,25 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
                 params.bench_repeats = 5;
             }
         } else if (arg == "--bench-runs") {
-            params.bench_repeats = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.bench_repeats = static_cast<uint32_t>(parsed);
         } else if (arg == "--bench-warmup") {
-            params.bench_warmup = std::stoi(next_value(i));
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed < 0) {
+                numeric_parse_error(arg.c_str(), value, "a non-negative 32-bit integer", argc, argv, params);
+            }
+            params.bench_warmup = static_cast<uint32_t>(parsed);
         } else if (arg == "--bench-json") {
             params.bench_json = true;
         } else if (arg == "--print-embeddings") {
             params.print_embeddings = true;
+        } else if (arg == "--embeddings-binary") {
+            params.embeddings_binary = true;
         } else if (arg == "--print-patch-tokens") {
             params.print_patch_tokens = true;
         } else if (arg == "--l2-normalize") {
@@ -828,6 +1035,22 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             print_usage(stderr, argc, argv, params);
             exit(1);
         }
+    }
+
+    if (params.embeddings_binary && params.image_out.empty()) {
+        fprintf(stderr, "error: --embeddings-binary requires -o PATH\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.embeddings_binary && params.classify) {
+        fprintf(stderr, "error: --embeddings-binary cannot be combined with --classify\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.embeddings_binary && params.bench_repeats != 0) {
+        fprintf(stderr, "error: --embeddings-binary cannot be combined with --bench\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
     }
 
     return true;

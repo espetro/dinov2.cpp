@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <regex>
 #include <string>
 #include <vector>
@@ -498,6 +499,71 @@ TEST_CASE("dino_classify_preprocess: wide input preserves aspect (shortest-edge 
     }
 }
 
+TEST_CASE("binary embeddings preview writes little-endian header and payload") {
+    const std::string path = "/tmp/dinov2-binary-preview-test.d2e";
+    dino_output       output;
+    output.cls_token    = std::vector<float>{1.0f, 2.0f};
+    output.pooled       = std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f};
+    output.patch_tokens = std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f};
+
+    std::string error;
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, false, false, error));
+    REQUIRE(error.empty());
+
+    std::ifstream                    file(path, std::ios::binary);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
+    std::remove(path.c_str());
+    REQUIRE(bytes.size() == 32 + (2 + 4) * sizeof(float));
+    CHECK(bytes[0] == 'D');
+    CHECK(bytes[1] == '2');
+    CHECK(bytes[2] == 'E');
+    CHECK(bytes[3] == 'M');
+    CHECK(bytes[4] == 'B');
+    CHECK(bytes[5] == 0);
+    CHECK(bytes[6] == 0);
+    CHECK(bytes[7] == 0);
+    CHECK(bytes[8] == 1);
+    CHECK(bytes[9] == 0);
+    CHECK(bytes[10] == 32);
+    CHECK(bytes[11] == 0);
+    CHECK(bytes[12] == 2);
+    CHECK(bytes[16] == 4);
+    CHECK(bytes[20] == 0);
+    CHECK(bytes[24] == 0);
+    CHECK(bytes[28] == 0);
+
+    const auto read_float = [&](size_t offset) {
+        uint32_t bits = static_cast<uint32_t>(bytes[offset]) | (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
+                        (static_cast<uint32_t>(bytes[offset + 2]) << 16) |
+                        (static_cast<uint32_t>(bytes[offset + 3]) << 24);
+        float value;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    };
+    CHECK(read_float(32) == doctest::Approx(1.0f));
+    CHECK(read_float(36) == doctest::Approx(2.0f));
+    CHECK(read_float(40) == doctest::Approx(1.0f));
+    CHECK(read_float(44) == doctest::Approx(2.0f));
+    CHECK(read_float(48) == doctest::Approx(3.0f));
+    CHECK(read_float(52) == doctest::Approx(4.0f));
+
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, true, true, error));
+    file.clear();
+    file.open(path, std::ios::binary);
+    const std::vector<unsigned char> patch_bytes((std::istreambuf_iterator<char>(file)),
+                                                 std::istreambuf_iterator<char>());
+    file.close();
+    std::remove(path.c_str());
+    REQUIRE(patch_bytes.size() == 32 + (2 + 4 + 4) * sizeof(float));
+    CHECK(patch_bytes[20] == 2);
+    CHECK(patch_bytes[24] == 3);
+    CHECK(patch_bytes[56] == 0); // payload remains CLS, pooled, then patches
+    CHECK(patch_bytes[57] == 0);
+    CHECK(patch_bytes[58] == 160);
+    CHECK(patch_bytes[59] == 64); // 5.0f in little-endian
+}
+
 TEST_CASE("l2_normalize: produces unit norm and preserves direction") {
     std::vector<float> v   = {3.0f, 4.0f, 0.0f, -1.0f, 2.0f};
     const float        in0 = v[0], in1 = v[1], in3 = v[3], in4 = v[4];
@@ -548,6 +614,22 @@ TEST_CASE("dino_batch_size_valid: bounds") {
 TEST_CASE("dino_params: n_batch defaults to 1") {
     dino_params p;
     CHECK(p.n_batch == 1);
+}
+
+TEST_CASE("dino_params_parse: accepts valid numeric boundaries") {
+    dino_params p;
+    char        a0[] = "prog", a1[] = "--seed", a2[] = "-2147483648", a3[] = "--threads", a4[] = "1";
+    char        a5[] = "--topk", a6[] = "1", a7[] = "--batch", a8[] = "64";
+    char        a9[] = "--bench-runs", a10[] = "1", a11[] = "--bench-warmup", a12[] = "0";
+    char       *argv[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12};
+
+    CHECK(dino_params_parse(13, argv, p));
+    CHECK(p.seed == INT32_MIN);
+    CHECK(p.n_threads == 1);
+    CHECK(p.topk == 1);
+    CHECK(p.n_batch == DINO_MAX_BATCH);
+    CHECK(p.bench_repeats == 1);
+    CHECK(p.bench_warmup == 0);
 }
 
 TEST_CASE("dino_params_parse: --batch sets n_batch") {

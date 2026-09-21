@@ -14,6 +14,7 @@
 #endif
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -81,6 +82,23 @@ static std::string pca_out_path(const std::string &out_dir, const std::string &i
     return (std::filesystem::path(out_dir) / (stem + ".pca.png")).string();
 }
 
+static std::string binary_out_path(const std::string &out_path, const std::string &input_path, size_t index,
+                                   bool single_input) {
+    if (single_input) {
+        return out_path;
+    }
+    std::string stem = std::filesystem::path(input_path).stem().string();
+    for (char &c : stem) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_') {
+            c = '_';
+        }
+    }
+    if (stem.empty()) {
+        stem = "input";
+    }
+    return (std::filesystem::path(out_path) / (std::to_string(index) + "-" + stem + ".d2e")).string();
+}
+
 // Emit one JSON object on stdout with whatever output fields are set:
 // cls (both modes), pooled (feature mode), topk (classify mode),
 // patches (feature mode + --print-patch-tokens). With multiple inputs the
@@ -133,18 +151,26 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (params.embeddings_binary) {
+        fprintf(stderr,
+                "%s: warning: --embeddings-binary is an intentionally unstable preview format; "
+                "no compatibility guarantees are provided\n",
+                __func__);
+    }
+
     if (params.fnames_inp.empty()) {
         fprintf(stderr, "%s: no input images; pass at least one -i FNAME\n", __func__);
         return 1;
     }
 
     // nothing-to-do guard: no output mode selected
-    if (!params.classify && !params.print_embeddings && params.image_out.empty() && params.bench_repeats == 0) {
+    if (!params.classify && !params.print_embeddings && !params.embeddings_binary && params.image_out.empty() &&
+        params.bench_repeats == 0) {
         fprintf(stderr,
                 "%s: nothing to do: no output mode selected; choose one of:\n"
                 "  -c, --classify       print top-k classification labels\n"
                 "  --print-embeddings   emit embeddings JSON to stdout\n"
-                "  -o FNAME, --out      write PCA visualization of patch features to FNAME\n"
+                "  -o FNAME, --out      write PCA output or binary embeddings file/directory\n"
                 "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n",
                 __func__);
         return 1;
@@ -173,9 +199,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
         fprintf(stderr,
                 "%s: hint: download a model with:\n"
-                "  huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models\n"
+                "  hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models\n"
                 "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n",
                 __func__);
+        return 1;
+    }
+    if (params.classify && params.topk > model.hparams.num_classes) {
+        fprintf(stderr, "%s: --topk (%u) cannot exceed the model's %u classes\n", __func__, params.topk,
+                model.hparams.num_classes);
+        ggml_free(model.ctx);
+        ggml_backend_buffer_free(model.buffer);
+        ggml_backend_free(model.backend);
         return 1;
     }
 
@@ -216,14 +250,15 @@ int main(int argc, char **argv) {
         }
     }
 
-    // with multiple inputs -o names a directory for per-image PCA files;
-    // create it up front so a bad path fails before any compute
+    // With multiple inputs, -o names a directory for per-image PCA or binary files;
+    // create it up front so a bad path fails before any compute.
     if (params.fnames_inp.size() > 1 && !params.image_out.empty() && !params.classify && params.bench_repeats == 0) {
         std::error_code ec;
         std::filesystem::create_directories(params.image_out, ec);
-        if (ec) {
-            fprintf(stderr, "%s: failed to create output directory '%s': %s\n", __func__, params.image_out.c_str(),
-                    ec.message().c_str());
+        const bool output_is_directory = std::filesystem::is_directory(params.image_out, ec);
+        if (ec || !output_is_directory) {
+            fprintf(stderr, "%s: failed to create output directory '%s'%s%s\n", __func__, params.image_out.c_str(),
+                    ec ? ": " : ".", ec ? ec.message().c_str() : "");
             free_model();
             return 1;
         }
@@ -259,6 +294,22 @@ int main(int argc, char **argv) {
 
                     if (params.print_embeddings) {
                         print_embeddings_json(params, model, imgs_f[idx], image_path, output);
+                    }
+                    if (params.embeddings_binary) {
+                        const std::string out_path =
+                            binary_out_path(params.image_out, image_path, idx, params.fnames_inp.size() == 1);
+                        std::string error;
+                        if (!write_embeddings_binary(out_path, output, model.hparams.hidden_size,
+                                                     static_cast<uint32_t>((imgs_f[idx].ny / model.hparams.patch_size) *
+                                                                           (imgs_f[idx].nx / model.hparams.patch_size)),
+                                                     params.print_patch_tokens, params.l2_normalize, error)) {
+                            fprintf(stderr, "%s: failed to write binary embeddings '%s': %s\n", __func__,
+                                    out_path.c_str(), error.c_str());
+                            ggml_gallocr_free(allocr);
+                            free_model();
+                            return 1;
+                        }
+                        fprintf(stderr, "%s: wrote binary embeddings to '%s'\n", __func__, out_path.c_str());
                     } else if (params.classify && output.preds) {
                         // multi-input: label each top-k block with its image path
                         if (params.fnames_inp.size() > 1) {
@@ -274,7 +325,8 @@ int main(int argc, char **argv) {
                         fflush(stdout);
                     }
 
-                    if (!params.classify && output.patch_tokens && !params.image_out.empty()) {
+                    if (!params.embeddings_binary && !params.classify && output.patch_tokens &&
+                        !params.image_out.empty()) {
                         const std::string out_path   = params.fnames_inp.size() > 1
                                                            ? pca_out_path(params.image_out, image_path)
                                                            : params.image_out;

@@ -33,6 +33,63 @@ def get_args() -> argparse.Namespace:
 ARCH: Final[str] = "dinov2"
 
 
+def _is_dinov2_backbone(module: object) -> bool:
+    """Return whether an object has the Transformers DINOv2 backbone shape."""
+    encoder = getattr(module, "encoder", None)
+    if (
+        getattr(module, "embeddings", None) is None
+        or getattr(encoder, "layer", None) is None
+    ):
+        return False
+
+    config = getattr(module, "config", None)
+    model_type = getattr(config, "model_type", None)
+    return model_type is None or str(model_type).lower() in {
+        "dinov2",
+        "dinov2_with_registers",
+    }
+
+
+def resolve_dinov2_backbone(model: object) -> object:
+    """Find the DINOv2 module in either a base or classifier Transformers model.
+
+    AutoModel returns the backbone itself, while AutoModelForImageClassification
+    wraps it.  The wrapper's public ``base_model`` property and the module tree
+    are preferable to relying on a version-specific wrapper attribute such as
+    ``dinov2`` or ``dinov2_with_registers``.
+    """
+    pending = [model]
+    seen: set[int] = set()
+    while pending:
+        module = pending.pop(0)
+        if id(module) in seen:
+            continue
+        seen.add(id(module))
+        if _is_dinov2_backbone(module):
+            return module
+
+        base_model = getattr(module, "base_model", None)
+        if base_model is not None and base_model is not module:
+            pending.append(base_model)
+
+        if isinstance(module, torch.nn.Module):
+            pending.extend(child for _, child in module.named_children())
+        else:
+            # This also keeps the resolver straightforward to unit test with a
+            # small synthetic wrapper without constructing a Transformers model.
+            # Some malformed or slot-only objects do not support vars(); they
+            # are leaves in this best-effort traversal, not resolver errors.
+            try:
+                values = vars(module).values()
+            except TypeError:
+                continue
+            pending.extend(value for value in values if hasattr(value, "__dict__"))
+
+    raise AttributeError(
+        "Could not locate a DINOv2 backbone with embeddings and encoder.layer"
+    )
+
+
 @torch.no_grad()
 def main() -> None:
     args = get_args()
@@ -49,6 +106,7 @@ def main() -> None:
         id2label = config.id2label
     else:
         model = AutoModel.from_pretrained(args.model_name)
+    backbone = resolve_dinov2_backbone(model)
 
     ggml_type = GGMLQuantizationType.F16
 
@@ -87,10 +145,7 @@ def main() -> None:
         )
         save_tensor(gguf_writer, k, v, ggml_type)
 
-    if num_register_tokens > 0:
-        layers = model.dinov2_with_registers.encoder.layer
-    else:
-        layers = model.dinov2.encoder.layer
+    layers = backbone.encoder.layer
 
     for i, layer in enumerate(layers):
         base_name = f"encoder.layer.{i}.attention.attention"
