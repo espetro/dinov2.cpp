@@ -33,18 +33,24 @@ static std::string shell_quote(const std::string &value) {
     return quoted;
 }
 
-static int run_cli(const std::string &cli, const std::vector<std::string> &args, std::string &output) {
-    const std::string output_path = "/tmp/dinov2-cli-test-" + std::to_string(process_id()) + ".txt";
-    std::string       command     = shell_quote(cli);
+static int run_cli(const std::string &cli, const std::vector<std::string> &args, std::string &stdout_output,
+                   std::string &stderr_output) {
+    const std::string output_prefix = "/tmp/dinov2-cli-test-" + std::to_string(process_id());
+    const std::string stdout_path   = output_prefix + "-stdout.txt";
+    const std::string stderr_path   = output_prefix + "-stderr.txt";
+    std::string       command       = shell_quote(cli);
     for (const std::string &arg : args) {
         command += " " + shell_quote(arg);
     }
-    command += " >" + shell_quote(output_path) + " 2>&1";
+    command += " >" + shell_quote(stdout_path) + " 2>" + shell_quote(stderr_path);
 
     const int     status = std::system(command.c_str());
-    std::ifstream output_file(output_path);
-    output.assign(std::istreambuf_iterator<char>(output_file), std::istreambuf_iterator<char>());
-    std::remove(output_path.c_str());
+    std::ifstream stdout_file(stdout_path);
+    stdout_output.assign(std::istreambuf_iterator<char>(stdout_file), std::istreambuf_iterator<char>());
+    std::ifstream stderr_file(stderr_path);
+    stderr_output.assign(std::istreambuf_iterator<char>(stderr_file), std::istreambuf_iterator<char>());
+    std::remove(stdout_path.c_str());
+    std::remove(stderr_path.c_str());
 
     if (status == -1) {
         return -1;
@@ -69,28 +75,27 @@ int main(int argc, char **argv) {
 
     const std::string                           cli   = argv[1];
     const std::vector<std::vector<std::string>> cases = {
-        {"--seed", "12abc"},
-        {"--threads", "0"},
-        {"--topk", "999999999999999999999"},
-        {"--batch", "65"},
-        {"--bench-runs", "1.5"},
-        {"--bench-warmup", "-1"},
-        {"--batch", " 1"},
+        {"--seed", "12abc"}, {"--seed", "+-5"},       {"--threads", "0"},       {"--topk", "999999999999999999999"},
+        {"--batch", "65"},   {"--bench-runs", "1.5"}, {"--bench-warmup", "-1"}, {"--batch", " 1"},
         {"--seed"},
     };
     for (const auto &args : cases) {
-        std::string output;
-        if (run_cli(cli, args, output) != 1 || output.find("error:") == std::string::npos ||
-            output.find("usage:") == std::string::npos) {
+        std::string stdout_output;
+        std::string stderr_output;
+        if (run_cli(cli, args, stdout_output, stderr_output) != 1 || !stdout_output.empty() ||
+            stderr_output.find("error:") == std::string::npos || stderr_output.find("usage:") == std::string::npos) {
             return 1;
         }
     }
 
-    std::string output;
-    if (run_cli(cli, {"--help"}, output) != 0 || output.find("usage:") == std::string::npos) {
+    std::string stdout_output;
+    std::string stderr_output;
+    if (run_cli(cli, {"--help"}, stdout_output, stderr_output) != 0 || !stderr_output.empty() ||
+        stdout_output.find("usage:") == std::string::npos) {
         return 1;
     }
-    if (run_cli(cli, {"--version"}, output) != 0 || output.find("dinov2-cli") == std::string::npos) {
+    if (run_cli(cli, {"--version"}, stdout_output, stderr_output) != 0 || !stderr_output.empty() ||
+        stdout_output.find("dinov2-cli") == std::string::npos) {
         return 1;
     }
     return 0;

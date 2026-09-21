@@ -758,6 +758,11 @@ template <typename T> static bool parse_integer(const char *value, T &result) {
     const char *first = value;
     if (*first == '+') {
         ++first;
+        if (*first == '+' || *first == '-') {
+            return false;
+        }
+    } else if (*first == '-' && (first[1] == '+' || first[1] == '-')) {
+        return false;
     }
     if (*first == '\0') {
         return false;
@@ -817,7 +822,8 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             const char *value = next_value(i);
             int32_t     parsed;
             if (!parse_integer(value, parsed) || !dino_batch_size_valid(parsed)) {
-                numeric_parse_error(arg.c_str(), value, "an integer from 1 through 64", argc, argv, params);
+                const std::string range = "an integer from 1 through " + std::to_string(DINO_MAX_BATCH);
+                numeric_parse_error(arg.c_str(), value, range.c_str(), argc, argv, params);
             }
             params.n_batch = static_cast<uint32_t>(parsed);
         } else if (arg == "-o" || arg == "--out") {
