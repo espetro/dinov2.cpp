@@ -180,9 +180,9 @@ ImageF preprocess_resize_crop(const Image &src, int short_edge, int crop) {
 // DINOv2 preprocessing
 // ---------------------------------------------------------------------------
 
-ImageF preprocess_for_dinov2(const Image &src, int target_size) {
+ImageF preprocess_resize_normalized(const Image &src, int w, int h) {
     ImageF out;
-    if (src.data.empty()) {
+    if (src.data.empty() || w <= 0 || h <= 0) {
         return out;
     }
     // convert to float in [0, 1]
@@ -191,18 +191,12 @@ ImageF preprocess_for_dinov2(const Image &src, int target_size) {
         fsrc[i] = src.data[i] / 255.0f;
     }
 
-    // resize each dimension up to the next multiple of target_size (true
-    // ceil: a dimension already at a multiple is unchanged)
-    auto      mult  = [](int v, int t) { return ((v + t - 1) / t) * t; };
-    const int new_w = mult(src.nx, target_size);
-    const int new_h = mult(src.ny, target_size);
+    std::vector<float> resized = resize_planes(fsrc.data(), src.nx, src.ny, w, h, 3);
 
-    std::vector<float> resized = resize_planes(fsrc.data(), src.nx, src.ny, new_w, new_h, 3);
-
-    out.nx = new_w;
-    out.ny = new_h;
+    out.nx = w;
+    out.ny = h;
     out.c  = 3;
-    out.data.resize((size_t)new_w * new_h * 3);
+    out.data.resize((size_t)w * h * 3);
     for (size_t i = 0; i < out.data.size(); i += 3) {
         // RGB channel order (stb gives RGB), ImageNet normalization
         out.data[i + 0] = (resized[i + 0] - IMAGENET_DEFAULT_MEAN[0]) / IMAGENET_DEFAULT_STD[0];
@@ -210,6 +204,13 @@ ImageF preprocess_for_dinov2(const Image &src, int target_size) {
         out.data[i + 2] = (resized[i + 2] - IMAGENET_DEFAULT_MEAN[2]) / IMAGENET_DEFAULT_STD[2];
     }
     return out;
+}
+
+ImageF preprocess_for_dinov2(const Image &src, int target_size) {
+    // resize each dimension up to the next multiple of target_size (true
+    // ceil: a dimension already at a multiple is unchanged)
+    auto mult = [](int v, int t) { return ((v + t - 1) / t) * t; };
+    return preprocess_resize_normalized(src, mult(src.nx, target_size), mult(src.ny, target_size));
 }
 
 // ---------------------------------------------------------------------------

@@ -134,11 +134,11 @@ ImageF dino_feature_preprocess(const Image &img, const dino_hparams &hparams, co
         // fixed 518x518 grid; every input shares dims, so batches always match
         return preprocess_resize_crop(img, 518, 518);
     case dino_preprocess_mode::bounded:
-    default:
-        if (!params.no_resize && std::min(img.nx, img.ny) > DINO_FEATURE_SHORT_EDGE) {
-            return dino_preprocess(resize_shortest_edge(img, DINO_FEATURE_SHORT_EDGE), hparams);
-        }
-        return dino_preprocess(img, hparams);
+    default: {
+        // one bicubic resample straight to the bounded, patch-aligned dims
+        const ImgSize target = dino_feature_output_size(img, hparams, params);
+        return preprocess_resize_normalized(img, target.width, target.height);
+    }
     }
 }
 
@@ -360,8 +360,9 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
 
     // std::cout << "patch size " << hparams.patch_size << std::endl;
 
-    const int new_w = (img_size.width / model.hparams.patch_size + 1) * model.hparams.patch_size;
-    const int new_h = (img_size.height / model.hparams.patch_size + 1) * model.hparams.patch_size;
+    const int p     = (int)model.hparams.patch_size;
+    const int new_w = ((img_size.width + p - 1) / p) * p;
+    const int new_h = ((img_size.height + p - 1) / p) * p;
 
     const int h0                = new_h / hparams.patch_size;
     const int w0                = new_w / hparams.patch_size;

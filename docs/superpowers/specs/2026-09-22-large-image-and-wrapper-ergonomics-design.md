@@ -106,8 +106,8 @@ All resize+center-crop recipes go through one shared helper `preprocess_resize_c
 
 A new public function `dino_preprocess_mode(const Image &, const dino_hparams &, const dino_params &)` (name adjustable) dispatches:
 
-- `bounded` (default): if `min(nx, ny) > 518`, bicubic-resize so the shortest edge is 518 preserving aspect (`lround` dims), then apply `dino_preprocess` (true-ceil alignment + normalize). Images with shortest edge <= 518 skip the resize entirely and take today's path.
-- `bounded` + `--no-resize`: skip the shortest-edge resize; equivalent to today's exact behavior. Still subject to `--max-tokens`.
+- `bounded` (default): compute target dims via `dino_feature_output_size` (shortest edge 518 preserving aspect when larger, then true-ceil patch alignment), then do exactly one bicubic resample on float [0,1] pixels straight to those dims plus ImageNet normalization (`preprocess_resize_normalized`, shared with `preprocess_for_dinov2`). Images with shortest edge <= 518 produce byte-identical output to `dino_preprocess`.
+- `bounded` + `--no-resize`: the bound is skipped; target dims are the true-ceil native alignment (equivalent to today's behavior, modulo true ceil). Still subject to `--max-tokens`.
 - `hf`: `preprocess_resize_crop(img, 256, 224)` -> 16x16 = 256 tokens at patch 14.
 - `crop518`: `preprocess_resize_crop(img, 518, 518)` -> 37x37 = 1369 tokens at patch 14; every input shares dims, so mixed-dimension batches always pass the chunk check.
 

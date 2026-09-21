@@ -42,6 +42,11 @@ float cubic_kernel(float x);
 // clamped edge handling. Exposed for unit tests.
 float sample_cubic(const float *src, int sw, int sh, int c, int channels, float fx, float fy);
 
+// Bicubic (Catmull-Rom) resize of an 8-bit RGB image to exactly w x h on
+// float [0,1] pixels (no uint8 round-trip), then ImageNet mean/std
+// normalization. Shared by feature-mode preprocessing paths.
+ImageF preprocess_resize_normalized(const Image &src, int w, int h);
+
 // DINOv2 preprocessing: resize each side up to the next multiple of
 // target_size (true ceil; aligned dims are unchanged) with bicubic, scale to
 // [0,1], ImageNet mean/std normalization.

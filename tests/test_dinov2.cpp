@@ -632,6 +632,67 @@ TEST_CASE("dino_feature_preprocess: crop518 yields a fixed 518x518 grid") {
     CHECK(out2.ny == 518);
 }
 
+TEST_CASE("dino_feature_output_size matches dino_feature_preprocess dims") {
+    dino_hparams h;
+    h.patch_size = 14;
+
+    const int sizes[][2] = {{2000, 800}, {518, 518}, {612, 408}, {3440, 5601}, {15, 15}, {1, 1}, {112, 56}};
+    for (const auto &s : sizes) {
+        for (auto mode : {dino_preprocess_mode::bounded, dino_preprocess_mode::hf, dino_preprocess_mode::crop518}) {
+            dino_params params;
+            params.preprocess_mode = mode;
+            Image img;
+            img.nx = s[0];
+            img.ny = s[1];
+            img.c  = 3;
+            img.data.assign((size_t)img.nx * img.ny * 3, 128);
+            const ImgSize target = dino_feature_output_size(img, h, params);
+            const ImageF  out    = dino_feature_preprocess(img, h, params);
+            CHECK(out.nx == target.width);
+            CHECK(out.ny == target.height);
+            CHECK(out.nx % 14 == 0);
+            CHECK(out.ny % 14 == 0);
+        }
+    }
+    // --no-resize under bounded: dims equal the true-ceil native alignment
+    {
+        dino_params params;
+        params.no_resize = true;
+        Image img;
+        img.nx = 2000;
+        img.ny = 800;
+        img.c  = 3;
+        img.data.assign((size_t)img.nx * img.ny * 3, 128);
+        const ImgSize target = dino_feature_output_size(img, h, params);
+        const ImageF  out    = dino_feature_preprocess(img, h, params);
+        CHECK(out.nx == target.width);
+        CHECK(out.ny == target.height);
+    }
+}
+
+TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess under the bound") {
+    // shortest edge <= 518: bounded does a single resample to the same
+    // patch-aligned dims dino_preprocess computes, so bytes must match.
+    dino_hparams h;
+    h.patch_size = 14;
+    dino_params params;
+
+    Image img;
+    img.nx = 500;
+    img.ny = 375;
+    img.c  = 3;
+    img.data.resize((size_t)img.nx * img.ny * 3);
+    for (size_t i = 0; i < img.data.size(); ++i) {
+        img.data[i] = (uint8_t)(i % 251);
+    }
+
+    const auto a = dino_feature_preprocess(img, h, params);
+    const auto b = dino_preprocess(img, h);
+    CHECK(a.nx == b.nx);
+    CHECK(a.ny == b.ny);
+    CHECK(a.data == b.data);
+}
+
 TEST_CASE("dino_classify_preprocess: shared helper keeps 224x224 output") {
     // classify and hf feature mode run the same (256, 224) recipe, so their
     // outputs must be identical byte for byte.
