@@ -196,6 +196,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s: preprocessed image (%d x %d)\n", __func__, img_f.nx, img_f.ny);
         imgs_f.push_back(std::move(img_f));
     }
+    std::vector<Image>().swap(imgs);
 
     // one graph covers a whole chunk, so all images inside an n_batch-sized
     // chunk must share dimensions; different chunks may differ

@@ -43,7 +43,7 @@ wording. Flags that take a value read it from the next argument.
 | `--batch N` | 1 | max images per forward pass (max 64); inputs run in chunks of N |
 | `-c`, `--classify` | off | classify each input image and print top-k labels |
 | `-k N`, `--topk` | 5 | number of classes printed with `-c` |
-| `--print-embeddings` | off | emit one embeddings JSON object on stdout |
+| `--print-embeddings` | off | emit one JSON object for one input; one JSON object per line (JSONL) for multiple inputs |
 | `--print-patch-tokens` | off | add per-patch token vectors to that JSON |
 | `--l2-normalize` | off | L2-normalize emitted embedding vectors |
 | `-o FNAME`, `--out` | off | write a PCA visualization of patch features; a directory for multiple inputs |
@@ -184,6 +184,10 @@ All data goes to stdout, all logs go to stderr. Pipe safely:
 ```bash
 dinov2-cli -m models/model.gguf -i assets/tench.jpg --print-embeddings | jq .cls
 ```
+
+For multi-input JSONL or PCA runs, a later chunk failure can leave stdout or PCA
+output partial after earlier chunks were emitted. The process exits 1; consumers
+must check the exit status before treating output as complete.
 
 ## Workflows
 
