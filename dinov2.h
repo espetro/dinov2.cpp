@@ -72,6 +72,7 @@ struct dino_params {
     uint32_t    n_threads          = std::min(4u, std::thread::hardware_concurrency());
     bool        classify           = false;
     bool        print_embeddings   = false;           // print cls + pooled embeddings (parsing added separately)
+    bool        embeddings_binary  = false;           // write preview binary embeddings to -o
     bool        print_patch_tokens = false;           // print per-patch embeddings (parsing added separately)
     bool        l2_normalize       = false;           // L2-normalize emitted embedding vectors
     std::string model              = "../model.gguf"; // model path
@@ -133,5 +134,10 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
                                           ggml_gallocr_t allocr);
 
 void print_usage(FILE *out, int argc, char **argv, const dino_params &params);
+
+// Write the intentionally unstable version-1 D2EMB preview format.
+// The vectors are expected to already have the requested normalization applied.
+bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
+                             uint32_t patch_count, bool include_patches, bool normalized, std::string &error);
 
 bool dino_params_parse(int argc, char **argv, dino_params &params);

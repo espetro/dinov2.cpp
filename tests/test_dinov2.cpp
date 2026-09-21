@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <regex>
 #include <string>
 #include <vector>
@@ -496,6 +497,64 @@ TEST_CASE("dino_classify_preprocess: wide input preserves aspect (shortest-edge 
             CHECK(out.data[i + c] == doctest::Approx(expect).epsilon(5e-2));
         }
     }
+}
+
+TEST_CASE("binary embeddings preview writes little-endian header and payload") {
+    const std::string path = "/tmp/dinov2-binary-preview-test.d2e";
+    dino_output       output;
+    output.cls_token    = std::vector<float>{1.0f, 2.0f};
+    output.pooled       = std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f};
+    output.patch_tokens = std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f};
+
+    std::string error;
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, false, false, error));
+    REQUIRE(error.empty());
+
+    std::ifstream                    file(path, std::ios::binary);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
+    std::remove(path.c_str());
+    REQUIRE(bytes.size() == 32 + (2 + 4) * sizeof(float));
+    CHECK(std::memcmp(bytes.data(), "D2EMB\\0\\0\\0", 8) == 0);
+    CHECK(bytes[8] == 1);
+    CHECK(bytes[9] == 0);
+    CHECK(bytes[10] == 32);
+    CHECK(bytes[11] == 0);
+    CHECK(bytes[12] == 2);
+    CHECK(bytes[16] == 4);
+    CHECK(bytes[20] == 0);
+    CHECK(bytes[24] == 0);
+    CHECK(bytes[28] == 0);
+
+    const auto read_float = [&](size_t offset) {
+        uint32_t bits = static_cast<uint32_t>(bytes[offset]) | (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
+                        (static_cast<uint32_t>(bytes[offset + 2]) << 16) |
+                        (static_cast<uint32_t>(bytes[offset + 3]) << 24);
+        float value;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    };
+    CHECK(read_float(32) == doctest::Approx(1.0f));
+    CHECK(read_float(36) == doctest::Approx(2.0f));
+    CHECK(read_float(40) == doctest::Approx(1.0f));
+    CHECK(read_float(44) == doctest::Approx(2.0f));
+    CHECK(read_float(48) == doctest::Approx(3.0f));
+    CHECK(read_float(52) == doctest::Approx(4.0f));
+
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, true, true, error));
+    file.clear();
+    file.open(path, std::ios::binary);
+    const std::vector<unsigned char> patch_bytes((std::istreambuf_iterator<char>(file)),
+                                                 std::istreambuf_iterator<char>());
+    file.close();
+    std::remove(path.c_str());
+    REQUIRE(patch_bytes.size() == 32 + (2 + 4 + 4) * sizeof(float));
+    CHECK(patch_bytes[20] == 2);
+    CHECK(patch_bytes[24] == 3);
+    CHECK(patch_bytes[56] == 0); // payload remains CLS, pooled, then patches
+    CHECK(patch_bytes[57] == 0);
+    CHECK(patch_bytes[58] == 160);
+    CHECK(patch_bytes[59] == 64); // 5.0f in little-endian
 }
 
 TEST_CASE("l2_normalize: produces unit norm and preserves direction") {

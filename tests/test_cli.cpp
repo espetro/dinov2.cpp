@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
     const std::vector<std::vector<std::string>> cases = {
         {"--seed", "12abc"}, {"--seed", "+-5"},       {"--threads", "0"},       {"--topk", "999999999999999999999"},
         {"--batch", "65"},   {"--bench-runs", "1.5"}, {"--bench-warmup", "-1"}, {"--batch", " 1"},
-        {"--seed"},
+        {"--seed"},          {"--embeddings-binary"},
     };
     for (const auto &args : cases) {
         std::string stdout_output;

@@ -685,6 +685,75 @@ bool dino_batch_size_valid(int64_t n) {
     return n >= 1 && n <= (int64_t)DINO_MAX_BATCH;
 }
 
+bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
+                             uint32_t patch_count, bool include_patches, bool normalized, std::string &error) {
+    if (!output.cls_token || output.cls_token->size() != hidden_size) {
+        error = "CLS vector has an unexpected length";
+        return false;
+    }
+    if (!output.pooled || output.pooled->size() != static_cast<size_t>(2) * hidden_size) {
+        error = "pooled vector has an unexpected length";
+        return false;
+    }
+    if (include_patches &&
+        (!output.patch_tokens || output.patch_tokens->size() != static_cast<size_t>(patch_count) * hidden_size)) {
+        error = "patch vectors have an unexpected length";
+        return false;
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        error = "cannot open output file";
+        return false;
+    }
+
+    const uint32_t flags     = (include_patches ? 1u : 0u) | (normalized ? 2u : 0u);
+    auto           write_u16 = [&](uint16_t value) {
+        const unsigned char bytes[2] = {static_cast<unsigned char>(value & 0xffu),
+                                        static_cast<unsigned char>((value >> 8) & 0xffu)};
+        file.write(reinterpret_cast<const char *>(bytes), sizeof(bytes));
+    };
+    auto write_u32 = [&](uint32_t value) {
+        const unsigned char bytes[4] = {
+            static_cast<unsigned char>(value & 0xffu), static_cast<unsigned char>((value >> 8) & 0xffu),
+            static_cast<unsigned char>((value >> 16) & 0xffu), static_cast<unsigned char>((value >> 24) & 0xffu)};
+        file.write(reinterpret_cast<const char *>(bytes), sizeof(bytes));
+    };
+    auto write_float = [&](float value) {
+        uint32_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(value));
+        std::memcpy(&bits, &value, sizeof(bits));
+        write_u32(bits);
+    };
+
+    file.write("D2EMB\\0\\0\\0", 8);
+    write_u16(1);
+    write_u16(32);
+    write_u32(hidden_size);
+    write_u32(2 * hidden_size);
+    write_u32(include_patches ? patch_count : 0);
+    write_u32(flags);
+    write_u32(0);
+
+    for (float value : *output.cls_token) {
+        write_float(value);
+    }
+    for (float value : *output.pooled) {
+        write_float(value);
+    }
+    if (include_patches) {
+        for (float value : *output.patch_tokens) {
+            write_float(value);
+        }
+    }
+
+    if (!file) {
+        error = "write failed";
+        return false;
+    }
+    return true;
+}
+
 void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "usage: %s [options]\n", argv[0]);
     fprintf(out, "\n");
@@ -706,7 +775,8 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
     fprintf(out, "  -k N, --topk          top k classes to print, 1 or greater (default: %d)\n", params.topk);
     fprintf(out, "  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)\n");
-    fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the JSON output\n");
+    fprintf(out, "  --embeddings-binary   write preview binary embeddings to -o (unstable format)\n");
+    fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the embedding output\n");
     fprintf(out, "  --l2-normalize        L2-normalize emitted embedding vectors\n");
     fprintf(out, "  -o FNAME, --out       write PCA visualization of patch features to FNAME; with multiple\n");
     fprintf(out, "                        inputs FNAME is a directory for <input-stem>.pca.png files\n");
@@ -870,6 +940,8 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             params.bench_json = true;
         } else if (arg == "--print-embeddings") {
             params.print_embeddings = true;
+        } else if (arg == "--embeddings-binary") {
+            params.embeddings_binary = true;
         } else if (arg == "--print-patch-tokens") {
             params.print_patch_tokens = true;
         } else if (arg == "--l2-normalize") {
@@ -885,6 +957,22 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
             print_usage(stderr, argc, argv, params);
             exit(1);
         }
+    }
+
+    if (params.embeddings_binary && params.image_out.empty()) {
+        fprintf(stderr, "error: --embeddings-binary requires -o PATH\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.embeddings_binary && params.classify) {
+        fprintf(stderr, "error: --embeddings-binary cannot be combined with --classify\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.embeddings_binary && params.bench_repeats != 0) {
+        fprintf(stderr, "error: --embeddings-binary cannot be combined with --bench\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
     }
 
     return true;
