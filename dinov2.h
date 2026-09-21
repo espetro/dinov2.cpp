@@ -166,9 +166,11 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
 
 void print_usage(FILE *out, int argc, char **argv, const dino_params &params);
 
-// Write the intentionally unstable version-1 D2EMB preview format.
+// Write the intentionally unstable version-2 D2EMB preview format.
+// grid_w/grid_h are the patch-grid dimensions (zero when patches are absent).
 // The vectors are expected to already have the requested normalization applied.
 bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
-                             uint32_t patch_count, bool include_patches, bool normalized, std::string &error);
+                             uint32_t patch_count, uint32_t grid_w, uint32_t grid_h, bool include_patches,
+                             bool normalized, std::string &error);
 
 bool dino_params_parse(int argc, char **argv, dino_params &params);

@@ -763,7 +763,8 @@ bool dino_batch_size_valid(int64_t n) {
 }
 
 bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
-                             uint32_t patch_count, bool include_patches, bool normalized, std::string &error) {
+                             uint32_t patch_count, uint32_t grid_w, uint32_t grid_h, bool include_patches,
+                             bool normalized, std::string &error) {
     if (!output.cls_token || output.cls_token->size() != hidden_size) {
         error = "CLS vector has an unexpected length";
         return false;
@@ -805,13 +806,15 @@ bool write_embeddings_binary(const std::string &path, const dino_output &output,
 
     const char magic[8] = {'D', '2', 'E', 'M', 'B', '\0', '\0', '\0'};
     file.write(magic, sizeof(magic));
-    write_u16(1);
-    write_u16(32);
+    write_u16(2);
+    write_u16(40);
     write_u32(hidden_size);
     write_u32(2 * hidden_size);
     write_u32(include_patches ? patch_count : 0);
     write_u32(flags);
     write_u32(0);
+    write_u32(include_patches ? grid_w : 0);
+    write_u32(include_patches ? grid_h : 0);
 
     for (float value : *output.cls_token) {
         write_float(value);

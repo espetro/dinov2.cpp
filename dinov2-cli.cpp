@@ -103,12 +103,16 @@ static std::string binary_out_path(const std::string &out_path, const std::strin
 // cls (both modes), pooled (feature mode), topk (classify mode),
 // patches (feature mode + --print-patch-tokens). With multiple inputs the
 // caller prints one such line per image (JSONL).
-static void print_embeddings_json(const dino_params &params, const dino_model &model, const ImageF &img_f,
+static void print_embeddings_json(const dino_params &params, const dino_model &model, const ImageF &img_f, size_t index,
                                   const std::string &image_path, const dino_output &output) {
-    const int n_patches = (img_f.ny / model.hparams.patch_size) * (img_f.nx / model.hparams.patch_size);
-    fprintf(stdout, "{\"model\":\"%s\",\"image\":\"%s\",\"n_patches\":%d,\"hidden\":%u",
-            json_escape(model_label_from_path(params.model)).c_str(), json_escape(image_path).c_str(), n_patches,
-            model.hparams.hidden_size);
+    const int grid_w    = img_f.nx / model.hparams.patch_size;
+    const int grid_h    = img_f.ny / model.hparams.patch_size;
+    const int n_patches = grid_h * grid_w;
+    fprintf(stdout,
+            "{\"model\":\"%s\",\"index\":%zu,\"image\":\"%s\",\"n_patches\":%d,"
+            "\"grid\":{\"h\":%d,\"w\":%d},\"hidden\":%u",
+            json_escape(model_label_from_path(params.model)).c_str(), index, json_escape(image_path).c_str(), n_patches,
+            grid_h, grid_w, model.hparams.hidden_size);
     if (output.cls_token) {
         fprintf(stdout, ",\"cls\":[");
         print_float_array(*output.cls_token);
@@ -318,7 +322,7 @@ int main(int argc, char **argv) {
                     const std::string &image_path = params.fnames_inp[idx];
 
                     if (params.print_embeddings) {
-                        print_embeddings_json(params, model, imgs_f[idx], image_path, output);
+                        print_embeddings_json(params, model, imgs_f[idx], idx, image_path, output);
                     }
                     if (params.embeddings_binary) {
                         const std::string out_path =
@@ -327,6 +331,8 @@ int main(int argc, char **argv) {
                         if (!write_embeddings_binary(out_path, output, model.hparams.hidden_size,
                                                      static_cast<uint32_t>((imgs_f[idx].ny / model.hparams.patch_size) *
                                                                            (imgs_f[idx].nx / model.hparams.patch_size)),
+                                                     static_cast<uint32_t>(imgs_f[idx].nx / model.hparams.patch_size),
+                                                     static_cast<uint32_t>(imgs_f[idx].ny / model.hparams.patch_size),
                                                      params.print_patch_tokens, params.l2_normalize, error)) {
                             fprintf(stderr, "%s: failed to write binary embeddings '%s': %s\n", __func__,
                                     out_path.c_str(), error.c_str());

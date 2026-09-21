@@ -721,14 +721,14 @@ TEST_CASE("binary embeddings preview writes little-endian header and payload") {
     output.patch_tokens = std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f};
 
     std::string error;
-    REQUIRE(write_embeddings_binary(path, output, 2, 2, false, false, error));
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, 5, 3, false, false, error));
     REQUIRE(error.empty());
 
     std::ifstream                    file(path, std::ios::binary);
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
     std::remove(path.c_str());
-    REQUIRE(bytes.size() == 32 + (2 + 4) * sizeof(float));
+    REQUIRE(bytes.size() == 40 + (2 + 4) * sizeof(float));
     CHECK(bytes[0] == 'D');
     CHECK(bytes[1] == '2');
     CHECK(bytes[2] == 'E');
@@ -737,15 +737,17 @@ TEST_CASE("binary embeddings preview writes little-endian header and payload") {
     CHECK(bytes[5] == 0);
     CHECK(bytes[6] == 0);
     CHECK(bytes[7] == 0);
-    CHECK(bytes[8] == 1);
+    CHECK(bytes[8] == 2); // version 2
     CHECK(bytes[9] == 0);
-    CHECK(bytes[10] == 32);
+    CHECK(bytes[10] == 40); // header size
     CHECK(bytes[11] == 0);
     CHECK(bytes[12] == 2);
     CHECK(bytes[16] == 4);
     CHECK(bytes[20] == 0);
     CHECK(bytes[24] == 0);
     CHECK(bytes[28] == 0);
+    CHECK(bytes[32] == 0); // grid fields are zero when patches are absent
+    CHECK(bytes[36] == 0);
 
     const auto read_float = [&](size_t offset) {
         uint32_t bits = static_cast<uint32_t>(bytes[offset]) | (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
@@ -755,27 +757,29 @@ TEST_CASE("binary embeddings preview writes little-endian header and payload") {
         std::memcpy(&value, &bits, sizeof(value));
         return value;
     };
-    CHECK(read_float(32) == doctest::Approx(1.0f));
-    CHECK(read_float(36) == doctest::Approx(2.0f));
     CHECK(read_float(40) == doctest::Approx(1.0f));
     CHECK(read_float(44) == doctest::Approx(2.0f));
-    CHECK(read_float(48) == doctest::Approx(3.0f));
-    CHECK(read_float(52) == doctest::Approx(4.0f));
+    CHECK(read_float(48) == doctest::Approx(1.0f));
+    CHECK(read_float(52) == doctest::Approx(2.0f));
+    CHECK(read_float(56) == doctest::Approx(3.0f));
+    CHECK(read_float(60) == doctest::Approx(4.0f));
 
-    REQUIRE(write_embeddings_binary(path, output, 2, 2, true, true, error));
+    REQUIRE(write_embeddings_binary(path, output, 2, 2, 5, 3, true, true, error));
     file.clear();
     file.open(path, std::ios::binary);
     const std::vector<unsigned char> patch_bytes((std::istreambuf_iterator<char>(file)),
                                                  std::istreambuf_iterator<char>());
     file.close();
     std::remove(path.c_str());
-    REQUIRE(patch_bytes.size() == 32 + (2 + 4 + 4) * sizeof(float));
+    REQUIRE(patch_bytes.size() == 40 + (2 + 4 + 4) * sizeof(float));
     CHECK(patch_bytes[20] == 2);
     CHECK(patch_bytes[24] == 3);
-    CHECK(patch_bytes[56] == 0); // payload remains CLS, pooled, then patches
-    CHECK(patch_bytes[57] == 0);
-    CHECK(patch_bytes[58] == 160);
-    CHECK(patch_bytes[59] == 64); // 5.0f in little-endian
+    CHECK(patch_bytes[32] == 5); // grid_w
+    CHECK(patch_bytes[36] == 3); // grid_h
+    CHECK(patch_bytes[64] == 0); // payload remains CLS, pooled, then patches
+    CHECK(patch_bytes[65] == 0);
+    CHECK(patch_bytes[66] == 160);
+    CHECK(patch_bytes[67] == 64); // 5.0f in little-endian
 }
 
 TEST_CASE("l2_normalize: produces unit norm and preserves direction") {
