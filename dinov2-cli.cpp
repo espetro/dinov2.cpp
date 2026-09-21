@@ -288,6 +288,12 @@ int main(int argc, char **argv) {
     {
         ggml_backend_synchronize(model.backend);
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
+        if (!allocr) {
+            fprintf(stderr, "%s: failed to create graph allocator\n", __func__);
+            free_model();
+            return 1;
+        }
+
         if (params.bench_repeats == 0) {
             // Single-shot path: run the inputs through dino_predict in chunks
             // of n_batch and emit per-image outputs in input order.

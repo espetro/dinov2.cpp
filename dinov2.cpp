@@ -388,6 +388,10 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     gguf_free(gguf_ctx);
 
     model.buffer = ggml_backend_alloc_ctx_tensors(model.ctx, model.backend);
+    if (!model.buffer) {
+        fprintf(stderr, "%s: failed to allocate model buffer on the backend\n", __func__);
+        return false;
+    }
     // copy tensors from main memory to backend
     for (struct ggml_tensor *cur = ggml_get_first_tensor(model.ctx); cur != nullptr;
          cur                     = ggml_get_next_tensor(model.ctx, cur)) {
@@ -1145,7 +1149,14 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     struct ggml_context *ctx_cgraph = ggml_init(params0);
     struct ggml_cgraph  *gf         = build_graph({nx, ny}, ctx_cgraph, model, batch_params);
 
-    ggml_gallocr_alloc_graph(allocr, gf);
+    if (!ggml_gallocr_alloc_graph(allocr, gf)) {
+        fprintf(stderr,
+                "%s: failed to allocate compute graph for a %d x %d input (%d patch tokens); "
+                "reduce input size or use --preprocess crop518 / --max-tokens\n",
+                __func__, nx, ny, num_patches);
+        ggml_free(ctx_cgraph);
+        return {};
+    }
 
     struct ggml_tensor *input = ggml_graph_get_tensor(gf, "input");
 
