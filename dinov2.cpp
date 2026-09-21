@@ -708,21 +708,32 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
 }
 
 bool dino_params_parse(int argc, char **argv, dino_params &params) {
+    // consume argv[++i] as the value for a flag; a trailing flag with no
+    // value is a usage error, not a read past argv[argc - 1]
+    auto next_value = [&](int &i) -> const char * {
+        if (i + 1 >= argc) {
+            fprintf(stderr, "error: %s requires a value\n", argv[i]);
+            print_usage(stderr, argc, argv, params);
+            exit(1);
+        }
+        return argv[++i];
+    };
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
         if (arg == "-s" || arg == "--seed") {
-            params.seed = std::stoi(argv[++i]);
+            params.seed = std::stoi(next_value(i));
         } else if (arg == "-m" || arg == "--model") {
-            params.model = argv[++i];
+            params.model = next_value(i);
         } else if (arg == "-i" || arg == "--inp") {
-            params.fname_inp = argv[++i];
+            params.fname_inp = next_value(i);
         } else if (arg == "-o" || arg == "--out") {
-            params.image_out = argv[++i];
+            params.image_out = next_value(i);
         } else if (arg == "-t" || arg == "--threads") {
-            params.n_threads = std::stoi(argv[++i]);
+            params.n_threads = std::stoi(next_value(i));
         } else if (arg == "-k" || arg == "--topk") {
-            params.topk = std::stoi(argv[++i]);
+            params.topk = std::stoi(next_value(i));
         } else if (arg == "-fa" || arg == "--flash_attn") {
             params.enable_flash_attn = true;
         } else if (arg == "-c" || arg == "--classify") {
@@ -734,9 +745,9 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
                 params.bench_repeats = 5;
             }
         } else if (arg == "--bench-runs") {
-            params.bench_repeats = std::stoi(argv[++i]);
+            params.bench_repeats = std::stoi(next_value(i));
         } else if (arg == "--bench-warmup") {
-            params.bench_warmup = std::stoi(argv[++i]);
+            params.bench_warmup = std::stoi(next_value(i));
         } else if (arg == "--bench-json") {
             params.bench_json = true;
         } else if (arg == "--print-embeddings") {
