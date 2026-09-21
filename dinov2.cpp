@@ -606,11 +606,11 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
 
     int64_t ne1    = cur->ne[1] - 1;
     size_t  offset = cur->nb[1];
-    if (!params.classify) {
-        // include register tokens for classification pooling
-        ne1 -= num_register_tokens;
-        offset *= (num_register_tokens + 1);
-    }
+    // patch_tokens always excludes the cls + register tokens, in both feature
+    // and classify mode; classification pooling matches HF, which pools over
+    // patch tokens only (sequence_output[:, 1 + num_register_tokens:])
+    ne1 -= num_register_tokens;
+    offset *= (num_register_tokens + 1);
 
     struct ggml_tensor *patch_tokens = ggml_view_4d(ctx_cgraph, cur, cur->ne[0], ne1, cur->ne[2], cur->ne[3],
                                                     cur->nb[1], cur->nb[2], cur->nb[3], offset);
