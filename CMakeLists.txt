@@ -31,6 +31,7 @@ else ()
 endif ()
 
 function(dinov2_target_flags target)
+    target_compile_definitions(${target} PRIVATE DINOV2_VERSION="${PROJECT_VERSION}")
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE
             $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:${DINOV2_RELEASE_FLAGS}>)

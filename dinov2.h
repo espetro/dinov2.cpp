@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <cinttypes>
+#include <cstdio>
 #include <optional>
 #include <memory>
 #include <thread>
@@ -23,6 +24,9 @@ constexpr float IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
 uint32_t get_val_u32(const struct gguf_context *ctx, const char *key);
 
 const char *get_val_str(const struct gguf_context *ctx, const char *key);
+
+// L2-normalize a vector in place; zero vectors are left unchanged.
+void l2_normalize(std::vector<float> &v);
 
 struct dino_hparams {
     uint32_t                   hidden_size         = 768;
@@ -55,15 +59,18 @@ struct dino_model {
 };
 
 struct dino_params {
-    uint32_t    seed              = 42;
-    uint32_t    topk              = 5;
-    bool        enable_flash_attn = false;
-    uint32_t    n_threads         = std::min(4u, std::thread::hardware_concurrency());
-    bool        classify          = false;
-    std::string model             = "../ggml-model-f16.gguf"; // model path
-    std::string fname_inp         = "../assets/tench.jpg";    // image path
-    std::string image_out         = "pca_visual.jpg";         // output of pca visualization (if used)
-    float       eps               = 1e-6f;                    // epsilon used in LN
+    uint32_t    seed               = 42;
+    uint32_t    topk               = 5;
+    bool        enable_flash_attn  = false;
+    uint32_t    n_threads          = std::min(4u, std::thread::hardware_concurrency());
+    bool        classify           = false;
+    bool        print_embeddings   = false;                 // print cls + pooled embeddings (parsing added separately)
+    bool        print_patch_tokens = false;                 // print per-patch embeddings (parsing added separately)
+    bool        l2_normalize       = false;                 // L2-normalize emitted embedding vectors
+    std::string model              = "../model.gguf";       // model path
+    std::string fname_inp          = "../assets/tench.jpg"; // image path
+    std::string image_out          = "";                    // output of pca visualization (if used)
+    float       eps                = 1e-6f;                 // epsilon used in LN
     // Benchmark controls. bench_repeats=0 disables the bench loop (legacy single-shot path).
     // --bench with no count sets bench_repeats to 5 (the default for one-shot "is it faster").
     uint32_t bench_repeats = 0;
@@ -87,11 +94,12 @@ void forward_head(ImgSize img_size, struct ggml_cgraph *graph, struct ggml_conte
                   const dino_params &params);
 
 struct dino_output {
-    std::optional<std::vector<uint32_t>> preds;
-    std::optional<std::vector<float>>    patch_tokens; // n_patches x hidden_size, row-major
+    std::optional<std::vector<uint32_t>> preds;        // top-k class indices (classify mode)
+    std::optional<std::vector<float>>    pred_scores;  // top-k probabilities, parallel to preds (classify mode)
+    std::optional<std::vector<float>>    cls_token;    // hidden_size floats (both modes)
+    std::optional<std::vector<float>>    pooled;       // [cls_token || mean(patch_tokens)], 2*hidden (feature mode)
+    std::optional<std::vector<float>>    patch_tokens; // n_patches x hidden_size, row-major (feature mode)
 };
-
-void print_t_f32(const char *title, const struct ggml_tensor *t, int n);
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 
@@ -107,6 +115,6 @@ struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgrap
 std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img, const dino_params &params,
                                           ggml_gallocr_t allocr);
 
-void print_usage(int argc, char **argv, const dino_params &params);
+void print_usage(FILE *out, int argc, char **argv, const dino_params &params);
 
 bool dino_params_parse(int argc, char **argv, dino_params &params);

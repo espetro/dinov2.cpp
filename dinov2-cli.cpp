@@ -30,6 +30,91 @@
 #pragma warning(disable : 4244 4267) // possible loss of data
 #endif
 
+// Extract a short model label from a GGUF path: e.g. "models/dinov2-vit-base-patch14/model.f16.gguf"
+// -> "dinov2-vit-base-patch14". Falls back to the full path if nothing matches.
+static std::string model_label_from_path(const std::string &path) {
+    std::string       label  = path;
+    const std::string needle = "dinov2-vit-";
+    const std::size_t pos    = label.find(needle);
+    if (pos != std::string::npos) {
+        std::size_t end = label.find('/', pos);
+        if (end == std::string::npos) {
+            end = label.find('.', pos);
+        }
+        label = label.substr(pos, end - pos);
+    }
+    return label;
+}
+
+// Escape '"' and '\' so a string can be embedded inside a JSON string literal.
+static std::string json_escape(const std::string &s) {
+    std::string out;
+    out.reserve(s.size());
+    for (const char c : s) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+        }
+        out += c;
+    }
+    return out;
+}
+
+// Look up a class label, falling back to the numeric index when the model has no label for it.
+static std::string class_label(const dino_model &model, uint32_t idx) {
+    const auto it = model.hparams.id2label.find(static_cast<int>(idx));
+    return it != model.hparams.id2label.end() ? it->second : std::to_string(idx);
+}
+
+static void print_float_array(const std::vector<float> &v) {
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (i > 0) {
+            fprintf(stdout, ",");
+        }
+        fprintf(stdout, "%.6g", static_cast<double>(v[i]));
+    }
+}
+
+// Emit one JSON object on stdout with whatever output fields are set:
+// cls (both modes), pooled (feature mode), topk (classify mode),
+// patches (feature mode + --print-patch-tokens).
+static void print_embeddings_json(const dino_params &params, const dino_model &model, const ImageF &img_f,
+                                  const dino_output &output) {
+    const int n_patches = (img_f.ny / model.hparams.patch_size) * (img_f.nx / model.hparams.patch_size);
+    fprintf(stdout, "{\"model\":\"%s\",\"image\":\"%s\",\"n_patches\":%d,\"hidden\":%u",
+            json_escape(model_label_from_path(params.model)).c_str(), json_escape(params.fname_inp).c_str(), n_patches,
+            model.hparams.hidden_size);
+    if (output.cls_token) {
+        fprintf(stdout, ",\"cls\":[");
+        print_float_array(*output.cls_token);
+        fprintf(stdout, "]");
+    }
+    if (output.pooled) {
+        fprintf(stdout, ",\"pooled\":[");
+        print_float_array(*output.pooled);
+        fprintf(stdout, "]");
+    }
+    if (params.classify && output.preds) {
+        fprintf(stdout, ",\"topk\":[");
+        for (size_t i = 0; i < output.preds->size(); ++i) {
+            if (i > 0) {
+                fprintf(stdout, ",");
+            }
+            const uint32_t idx  = (*output.preds)[i];
+            const float    prob = (*output.pred_scores)[i];
+            fprintf(stdout, "{\"idx\":%u,\"label\":\"%s\",\"prob\":%.6f}", idx,
+                    json_escape(class_label(model, idx)).c_str(), static_cast<double>(prob));
+        }
+        fprintf(stdout, "]");
+    }
+    if (params.print_patch_tokens && output.patch_tokens) {
+        fprintf(stdout, ",\"patches\":[");
+        print_float_array(*output.patch_tokens);
+        fprintf(stdout, "]");
+    }
+    fprintf(stdout, "}\n");
+    fflush(stdout);
+}
+
 // main function
 int main(int argc, char **argv) {
     ggml_time_init();
@@ -37,6 +122,18 @@ int main(int argc, char **argv) {
     dino_model  model;
 
     if (dino_params_parse(argc, argv, params) == false) {
+        return 1;
+    }
+
+    // nothing-to-do guard: no output mode selected
+    if (!params.classify && !params.print_embeddings && params.image_out.empty() && params.bench_repeats == 0) {
+        fprintf(stderr,
+                "%s: nothing to do: no output mode selected; choose one of:\n"
+                "  -c, --classify       print top-k classification labels\n"
+                "  --print-embeddings   emit embeddings JSON to stdout\n"
+                "  -o FNAME, --out      write PCA visualization of patch features to FNAME\n"
+                "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n",
+                __func__);
         return 1;
     }
 
@@ -53,6 +150,11 @@ int main(int argc, char **argv) {
     // load the model
     if (!dino_model_load({img.nx, img.ny}, params.model, model, params)) {
         fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
+        fprintf(stderr,
+                "%s: hint: download a model with:\n"
+                "  huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models\n"
+                "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n",
+                __func__);
         return 1;
     }
 
@@ -71,19 +173,35 @@ int main(int argc, char **argv) {
         ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
 
         if (params.bench_repeats == 0) {
-            // Legacy single-shot path: one timed forward pass, then PCA visualization.
+            // Legacy single-shot path: one timed forward pass, then optional output modes.
             int64_t                      t0     = ggml_time_ms();
             std::unique_ptr<dino_output> output = dino_predict(model, img_f, params, allocr);
             ggml_backend_synchronize(model.backend);
             int64_t dt_ms = ggml_time_ms() - t0;
             fprintf(stderr, "%s: graph computation took %lld ms\n", __func__, dt_ms);
 
+            if (!output) {
+                return 1;
+            }
+
+            if (params.print_embeddings) {
+                print_embeddings_json(params, model, img_f, *output);
+            } else if (params.classify && output->preds) {
+                // Human-readable top-k lines (moved out of dino_predict in the API refactor).
+                for (size_t i = 0; i < output->preds->size(); ++i) {
+                    const uint32_t idx  = (*output->preds)[i];
+                    const float    prob = (*output->pred_scores)[i];
+                    fprintf(stdout, " > %s : %.2f\n", class_label(model, idx).c_str(), static_cast<double>(prob));
+                }
+                fflush(stdout);
+            }
+
             ggml_free(model.ctx);
             ggml_gallocr_free(allocr);
             ggml_backend_buffer_free(model.buffer);
             ggml_backend_free(model.backend);
 
-            if (!params.classify && output->patch_tokens) {
+            if (!params.classify && output->patch_tokens && !params.image_out.empty()) {
                 const int patch_size = model.hparams.patch_size;
                 const int out_w      = img_f.nx;
                 const int out_h      = img_f.ny;
@@ -159,20 +277,7 @@ int main(int argc, char **argv) {
             double stddev      = samples.size() > 1 ? std::sqrt(variance / (double)(samples.size() - 1)) : 0.0;
             double peak_rss_mb = (double)peak_rss_kb / 1024.0;
 
-            // Extract a short model label from the GGUF path: e.g. "models/dinov2-vit-base-patch14/model.f16.gguf"
-            // -> "dinov2-vit-base-patch14". Falls back to the full path if nothing matches.
-            std::string model_label = params.model;
-            {
-                std::string needle = "dinov2-vit-";
-                std::size_t pos    = model_label.find(needle);
-                if (pos != std::string::npos) {
-                    std::size_t end = model_label.find('/', pos);
-                    if (end == std::string::npos) {
-                        end = model_label.find('.', pos);
-                    }
-                    model_label = model_label.substr(pos, end - pos);
-                }
-            }
+            const std::string model_label = model_label_from_path(params.model);
 
             if (params.bench_json) {
                 // One JSON object per line on stdout.

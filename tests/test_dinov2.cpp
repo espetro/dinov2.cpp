@@ -90,8 +90,8 @@ TEST_CASE("interpolate_pos_embed: identity when grid matches img_size") {
     h.img_size    = 224;
     h.patch_size  = 14;
 
-    const int num_patches = (int)h.n_img_embd() * (int)h.n_img_embd(); // 256
-    const int total_rows  = num_patches + 1;                          // 257
+    const int          num_patches = (int)h.n_img_embd() * (int)h.n_img_embd(); // 256
+    const int          total_rows  = num_patches + 1;                           // 257
     std::vector<float> pos_embed((size_t)total_rows * h.hidden_size);
 
     // Initialize with deterministic values: row r, col c -> r * 1000 + c.
@@ -101,7 +101,7 @@ TEST_CASE("interpolate_pos_embed: identity when grid matches img_size") {
         }
     }
 
-    ImgSize img_size{(int)h.img_size, (int)h.img_size};
+    ImgSize    img_size{(int)h.img_size, (int)h.img_size};
     const auto out = interpolate_pos_embed(img_size, pos_embed.data(), h);
 
     REQUIRE(out.size() == pos_embed.size());
@@ -117,15 +117,15 @@ TEST_CASE("interpolate_pos_embed: identity when grid matches for non-square img_
     h.img_size    = 196;
     h.patch_size  = 14;
 
-    const int num_patches = 14 * 14;
-    const int total_rows  = num_patches + 1;
+    const int          num_patches = 14 * 14;
+    const int          total_rows  = num_patches + 1;
     std::vector<float> pos_embed((size_t)total_rows * h.hidden_size);
     for (int r = 0; r < total_rows; ++r) {
         for (int c = 0; c < (int)h.hidden_size; ++c) {
             pos_embed[(size_t)r * h.hidden_size + c] = (float)r + (float)c * 0.1f;
         }
     }
-    ImgSize img_size{(int)h.img_size, (int)h.img_size};
+    ImgSize    img_size{(int)h.img_size, (int)h.img_size};
     const auto out = interpolate_pos_embed(img_size, pos_embed.data(), h);
     REQUIRE(out.size() == pos_embed.size());
     for (size_t i = 0; i < pos_embed.size(); ++i) {
@@ -145,7 +145,7 @@ TEST_CASE("interpolate_pos_embed: CLS row preserved when grid differs") {
     constexpr int w_new       = 37;
     const int     hidden_size = (int)h.hidden_size;
 
-    const int total_in_rows = M * M + 1;
+    const int          total_in_rows = M * M + 1;
     std::vector<float> pos_embed((size_t)total_in_rows * hidden_size);
     for (int c = 0; c < hidden_size; ++c) {
         pos_embed[(size_t)c] = 1000.0f + (float)c; // CLS row sentinel
@@ -156,7 +156,7 @@ TEST_CASE("interpolate_pos_embed: CLS row preserved when grid differs") {
         }
     }
 
-    ImgSize img_size{518, 518};
+    ImgSize    img_size{518, 518};
     const auto out = interpolate_pos_embed(img_size, pos_embed.data(), h);
 
     const int expected_total = h_new * w_new + 1;
@@ -179,13 +179,13 @@ TEST_CASE("interpolate_pos_embed: output size when grid differs") {
     h.img_size    = 224;
     h.patch_size  = 14;
 
-    constexpr int M         = 16;
-    constexpr int h_new     = 37; // 518/14
-    constexpr int w_new     = 37;
-    const int     total_in  = M * M + 1;
+    constexpr int      M        = 16;
+    constexpr int      h_new    = 37; // 518/14
+    constexpr int      w_new    = 37;
+    const int          total_in = M * M + 1;
     std::vector<float> pos_embed((size_t)total_in * h.hidden_size, 0.5f);
 
-    ImgSize img_size{518, 518};
+    ImgSize    img_size{518, 518};
     const auto out = interpolate_pos_embed(img_size, pos_embed.data(), h);
 
     const size_t expected = (size_t)(h_new * w_new + 1) * h.hidden_size;
@@ -206,9 +206,9 @@ TEST_CASE("dino_preprocess: pads non-aligned input to next patch-multiple") {
     h.patch_size = 14;
 
     Image img;
-    img.nx   = 100;
-    img.ny   = 50;
-    img.c    = 3;
+    img.nx = 100;
+    img.ny = 50;
+    img.c  = 3;
     img.data.assign((size_t)img.nx * img.ny * 3, 128);
 
     const auto out = dino_preprocess(img, h);
@@ -238,9 +238,9 @@ TEST_CASE("dino_preprocess: image smaller than patch triggers resize") {
     h.patch_size = 14;
 
     Image img;
-    img.nx   = 7;
-    img.ny   = 3;
-    img.c    = 3;
+    img.nx = 7;
+    img.ny = 3;
+    img.c  = 3;
     img.data.assign((size_t)7 * 3 * 3, 64);
 
     const auto out = dino_preprocess(img, h);
@@ -258,9 +258,9 @@ TEST_CASE("dino_preprocess: image smaller than patch triggers resize") {
 
 TEST_CASE("dino_preprocess: normalization formula across all channels") {
     Image img;
-    img.nx   = 14;
-    img.ny   = 14;
-    img.c    = 3;
+    img.nx = 14;
+    img.ny = 14;
+    img.c  = 3;
     img.data.assign((size_t)14 * 14 * 3, 0);
 
     // R plane 255, G 128, B 0.
@@ -289,4 +289,112 @@ TEST_CASE("dino_preprocess: normalization formula across all channels") {
         CHECK(out.data[i + 1] == doctest::Approx(g_expect).epsilon(1e-4));
         CHECK(out.data[i + 2] == doctest::Approx(b_expect).epsilon(1e-4));
     }
+}
+
+TEST_CASE("dino_classify_preprocess: square input yields 224x224 crop") {
+    dino_hparams h;
+
+    Image img;
+    img.nx = 100;
+    img.ny = 100;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 128);
+
+    const auto out = dino_classify_preprocess(img, h);
+
+    CHECK(out.nx == 224);
+    CHECK(out.ny == 224);
+    CHECK(out.c == 3);
+    REQUIRE(out.data.size() == (size_t)224 * 224 * 3);
+
+    // Constant input -> constant output equal to the normalized value.
+    const float means[3] = {0.485f, 0.456f, 0.406f};
+    const float stds[3]  = {0.229f, 0.224f, 0.225f};
+    for (size_t i = 0; i < out.data.size(); i += 3) {
+        for (int c = 0; c < 3; ++c) {
+            const float expect = (128.0f / 255.0f - means[c]) / stds[c];
+            CHECK(out.data[i + c] == doctest::Approx(expect).epsilon(1e-3));
+        }
+    }
+}
+
+TEST_CASE("dino_classify_preprocess: wide input preserves aspect (shortest-edge resize)") {
+    // 512x128 input: aspect-preserving resize -> 1024x256, then a 224x224
+    // center crop (x range 400..623 of the resized image). A 256x256 squash
+    // would instead keep the left-edge stripe inside the crop.
+    dino_hparams h;
+
+    Image img;
+    img.nx = 512;
+    img.ny = 128;
+    img.c  = 3;
+    img.data.assign((size_t)img.nx * img.ny * 3, 0);
+    // left 10% stripe at 255
+    for (int y = 0; y < img.ny; ++y) {
+        for (int x = 0; x < img.nx / 10; ++x) {
+            for (int c = 0; c < 3; ++c) {
+                img.data[((size_t)y * img.nx + x) * 3 + c] = 255;
+            }
+        }
+    }
+
+    const auto out = dino_classify_preprocess(img, h);
+
+    CHECK(out.nx == 224);
+    CHECK(out.ny == 224);
+    CHECK(out.c == 3);
+    REQUIRE(out.data.size() == (size_t)224 * 224 * 3);
+
+    for (float v : out.data) {
+        CHECK(std::isfinite(v));
+    }
+
+    // The left-edge stripe must be cropped away under aspect-preserving
+    // resize, so every output channel equals normalized 0.
+    const float means[3] = {0.485f, 0.456f, 0.406f};
+    const float stds[3]  = {0.229f, 0.224f, 0.225f};
+    for (size_t i = 0; i < out.data.size(); i += 3) {
+        for (int c = 0; c < 3; ++c) {
+            const float expect = (0.0f / 255.0f - means[c]) / stds[c];
+            CHECK(out.data[i + c] == doctest::Approx(expect).epsilon(5e-2));
+        }
+    }
+}
+
+TEST_CASE("l2_normalize: produces unit norm and preserves direction") {
+    std::vector<float> v   = {3.0f, 4.0f, 0.0f, -1.0f, 2.0f};
+    const float        in0 = v[0], in1 = v[1], in3 = v[3], in4 = v[4];
+    const float        n = std::sqrt(in0 * in0 + in1 * in1 + in3 * in3 + in4 * in4);
+
+    l2_normalize(v);
+
+    float norm = 0.0f;
+    for (float x : v) {
+        norm += x * x;
+    }
+    CHECK(norm == doctest::Approx(1.0f));
+    CHECK(v[0] == doctest::Approx(in0 / n));
+    CHECK(v[1] == doctest::Approx(in1 / n));
+    CHECK(v[2] == 0.0f);
+    CHECK(v[3] == doctest::Approx(in3 / n));
+    CHECK(v[4] == doctest::Approx(in4 / n));
+}
+
+TEST_CASE("l2_normalize: zero vector left unchanged") {
+    std::vector<float> v(16, 0.0f);
+
+    l2_normalize(v);
+
+    for (float x : v) {
+        CHECK(x == 0.0f);
+    }
+}
+
+TEST_CASE("l2_normalize: already-unit vector unchanged") {
+    std::vector<float> v = {1.0f, 0.0f, 0.0f, 0.0f};
+
+    l2_normalize(v);
+
+    CHECK(v[0] == doctest::Approx(1.0f));
+    CHECK(v[1] == doctest::Approx(0.0f));
 }

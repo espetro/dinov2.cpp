@@ -20,7 +20,7 @@ Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system d
 Using Claude Code, Cursor or another coding agent? Paste this:
 
 ```text
-Install https://github.com/espetro/dinov2.cpp via mise (latest), download the small GGUF from the dinov2-cpp-core profile on Hugging Face, and run classification on an example image to verify it works.
+Install https://github.com/espetro/dinov2.cpp via mise (latest), download the small GGUF from the dinov2-cpp-core profile on Hugging Face, and run classification plus `--print-embeddings` on an example image to verify it works.
 ```
 
 ### Manual install
@@ -44,11 +44,19 @@ tar xzf dinov2-v0.1.0-bin-macos-arm64.tar.gz
 huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 ```
 
-**3. Run inference** (add `-c` for classification, omit for PCA feature visualization):
+**3. Run inference** (`-c` for classification; add `-o out.png` for a PCA feature visualization):
 
 ```bash
-./bin/dinov2-cli -m models/ggml-model.gguf -i assets/tench.jpg -c
+./bin/dinov2-cli -m models/model.gguf -i assets/tench.jpg -c
 ```
+
+**Embeddings (JSON)** for PyTorch `last_hidden_state[:, 0]` consumers:
+
+```bash
+./bin/dinov2-cli -m models/model.gguf -i assets/tench.jpg --print-embeddings
+```
+
+Emits `cls`/`pooled` vectors on stdout as one JSON object.
 
 That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
 
@@ -59,7 +67,7 @@ That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory**
 | **Zero dependencies** | Image I/O via vendored stb, compute via ggml. Nothing else. |
 | **CPU, CUDA, Metal** | Backends via ggml wherever ggml supports them. |
 | **f16 GGUF weights** | Plus q4_0 through q8_0 quantization. |
-| **PyTorch-parity outputs** | Matches the reference implementation. |
+| **PyTorch-parity outputs** | CLS + patch embeddings as JSON, matching the reference implementation. |
 | **Cross-platform prebuilts** | macOS arm64, Linux x64/arm64, Windows x64. |
 
 ## Pre-converted GGUF weights
@@ -80,6 +88,7 @@ Ready-to-download f16 GGUF weights, published by CI to the [`dinov2-cpp-core`](h
 ## Documentation
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): pre-converted GGUF weights, build from source, dev harness, tests, PR guidelines
+- [docs/cli.md](docs/cli.md): `dinov2-cli` reference: flags, output modes, embeddings JSON schema, workflows
 - [docs/build.md](docs/build.md): per-device optimizations, quantization
 - [docs/benchmarks.md](docs/benchmarks.md): benchmarks against PyTorch, how to run your own
 - [docs/hf-publishing.md](docs/hf-publishing.md): how CI publishes GGUF weights to Hugging Face

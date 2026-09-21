@@ -27,6 +27,18 @@ cmake --build --preset debug && ctest --preset debug
 
 Run the same suite under the `asan` and `ubsan` presets before submitting anything that touches memory handling or the compute path.
 
+### Parity check vs PyTorch
+
+`scripts/parity_check.py` compares dinov2-cli embeddings and top-1 classification against the HuggingFace PyTorch reference and reports cosine similarity per image:
+
+```bash
+.venv/bin/python scripts/parity_check.py --gguf models/model.gguf
+```
+
+It needs the `.venv` deps (torch, transformers, pillow) and a downloaded GGUF.
+
+Default gates are cls/pooled cosine >= 0.999 and patch flat + per-token-mean cosine >= 0.99; the per-token minimum is reported as informational because f16 inference diverges from the f32 reference on a small token tail. Pass `--patches-token-min-threshold <float>` for a strict per-token check.
+
 ## Formatting
 
 CI enforces `clang-format-18`. Before committing:
