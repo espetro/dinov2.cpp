@@ -371,6 +371,12 @@ int main(int argc, char **argv) {
             double stddev      = samples.size() > 1 ? std::sqrt(variance / (double)(samples.size() - 1)) : 0.0;
             double peak_rss_mb = (double)peak_rss_kb / 1024.0;
 
+            // each timed run covered every input image, so per-image
+            // throughput is the mean divided by the image count
+            const double n_images       = (double)imgs_f.size();
+            const double ms_per_image   = n_images > 0.0 ? mean / n_images : 0.0;
+            const double images_per_sec = mean > 0.0 ? n_images * 1000.0 / mean : 0.0;
+
             const std::string model_label = model_label_from_path(params.model);
 
             if (params.bench_json) {
@@ -385,15 +391,17 @@ int main(int argc, char **argv) {
                 }
                 fprintf(stdout,
                         "],\"mean_ms\":%.1f,\"stddev_ms\":%.1f,\"min_ms\":%.0f,\"max_ms\":%.0f,"
-                        "\"peak_rss_mb\":%.0f}\n",
-                        mean, stddev, mn, mx, peak_rss_mb);
+                        "\"peak_rss_mb\":%.0f,\"n_images\":%zu,\"batch\":%u,\"ms_per_image\":%.1f,"
+                        "\"images_per_sec\":%.1f}\n",
+                        mean, stddev, mn, mx, peak_rss_mb, imgs_f.size(), params.n_batch, ms_per_image, images_per_sec);
                 fflush(stdout);
             } else {
                 fprintf(stderr,
-                        "%s: bench(model=%s, n_repeats=%u, n_warmup=%u, n_threads=%u) mean=%.1f ms "
-                        "stddev=%.1f ms min=%.0f ms max=%.0f ms peak_rss_mb=%.0f\n",
+                        "%s: bench(model=%s, n_repeats=%u, n_warmup=%u, n_threads=%u, n_images=%zu, batch=%u) "
+                        "mean=%.1f ms stddev=%.1f ms min=%.0f ms max=%.0f ms peak_rss_mb=%.0f "
+                        "ms_per_image=%.1f images_per_sec=%.1f\n",
                         __func__, model_label.c_str(), params.bench_repeats, params.bench_warmup, params.n_threads,
-                        mean, stddev, mn, mx, peak_rss_mb);
+                        imgs_f.size(), params.n_batch, mean, stddev, mn, mx, peak_rss_mb, ms_per_image, images_per_sec);
             }
 
             ggml_free(model.ctx);
