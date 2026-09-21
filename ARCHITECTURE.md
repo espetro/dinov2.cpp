@@ -317,7 +317,7 @@ Deliberately untracked by `.gitignore` and not in release archives:
 - `build/`, `build-*/`, `cmake-build-debug/` — local CMake output.
 - `.venv/`, `.venv-publish/` — per-run converter venv (created by `publish-gguf.sh`).
 - `*.gguf`, `/models`, `/data` — pre-converted weights live on HF; users pull
-  them with `huggingface-cli download`.
+  them with `hf download`.
 - `.agents/` — agent working notes (memory + plans); force-added per global
   AGENTS.md policy but not in release tarballs.
 - `.publish-logs/` — per-run audit trail from `publish-gguf.sh`.

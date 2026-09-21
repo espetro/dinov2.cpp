@@ -284,6 +284,22 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     // Backbone-only converters may omit this metadata because zero registers is
     // the ordinary DINOv2 default. Keep loading feature mode in that case.
     hparams.num_register_tokens = num_register_tokens.value_or(0);
+    if (has_register_tokens && hparams.num_register_tokens > 0) {
+        const ggml_tensor *register_tensor = ggml_get_tensor(tmp_ctx, "embeddings.register_tokens");
+        const bool         shape_matches   = register_tensor->ne[0] == hparams.hidden_size &&
+                                   register_tensor->ne[1] == hparams.num_register_tokens &&
+                                   register_tensor->ne[2] == 1 && register_tensor->ne[3] == 1;
+        if (!shape_matches) {
+            fprintf(stderr,
+                    "%s: embeddings.register_tokens has shape [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64
+                    "] but expected "
+                    "[%u, %u, 1, 1] (hidden_size, num_register_tokens, singleton trailing dimensions)\n",
+                    __func__, register_tensor->ne[0], register_tensor->ne[1], register_tensor->ne[2],
+                    register_tensor->ne[3], hparams.hidden_size, hparams.num_register_tokens);
+            gguf_free(gguf_ctx);
+            return false;
+        }
+    }
 
     const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
@@ -834,7 +850,8 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "\n");
     fprintf(out, "Output modes:\n");
     fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
-    fprintf(out, "  -k N, --topk          top k classes to print, 1 or greater (default: %d)\n", params.topk);
+    fprintf(out, "  -k N, --topk          top k classes to print, 1 through model class count (default: %d)\n",
+            params.topk);
     fprintf(out, "  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)\n");
     fprintf(out, "  --embeddings-binary   write preview binary embeddings to -o (unstable format)\n");
     fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the embedding output\n");

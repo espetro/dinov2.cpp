@@ -41,7 +41,7 @@ tar xzf dinov2-v0.1.0-bin-macos-arm64.tar.gz
 **2. Download a GGUF weight:**
 
 ```bash
-huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
+hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 ```
 
 **3. Run inference** (`-c` for classification; add `-o out.png` for a PCA feature visualization):

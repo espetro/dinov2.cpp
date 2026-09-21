@@ -7,10 +7,10 @@ These artifacts record actual runs of `scripts/parity_check.py` against the matc
 From the repository root, download both public Hugging Face GGUF artifacts into the paths used by the recorded commands:
 
 ```sh
-huggingface-cli download dinov2-cpp-core/dinov2-small-gguf model.gguf \
+hf download dinov2-cpp-core/dinov2-small-gguf model.gguf \
   --local-dir models/dinov2-small
 
-huggingface-cli download dinov2-cpp-core/dinov2-with-registers-small-gguf model.gguf \
+hf download dinov2-cpp-core/dinov2-with-registers-small-gguf model.gguf \
   --local-dir models/dinov2-with-registers-small
 ```
 

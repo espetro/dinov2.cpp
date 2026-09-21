@@ -21,7 +21,10 @@ run_bench() {
 }
 
 run_bench '{"mean_ms":208.6,"stddev_ms":3.2,"min_ms":206,"max_ms":214,"peak_rss_mb":104}'
-grep -Fq '| small | 208.6 | 3.2 | 206 | 214 | 104 |' "$test_dir/result.md"
+gguf_sha256="$(sha256sum "$test_dir/models/dinov2-vit-small-patch14/model.gguf" | cut -d ' ' -f 1)"
+grep -Fq "| small | models/dinov2-vit-small-patch14/model.gguf | $gguf_sha256 | 208.6 | 3.2 | 206 | 214 | 104 |" "$test_dir/result.md"
+grep -Fq "# Image path: $test_dir/input.jpg" "$test_dir/result.md"
+grep -Fq '# Build configuration: unknown' "$test_dir/result.md"
 
 if run_bench '{"mean_ms":208.6,"stddev_ms":3.2,"min_ms":206,"max_ms":214}' 2>/dev/null; then
     echo 'parser accepted a missing required field' >&2

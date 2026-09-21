@@ -199,9 +199,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
         fprintf(stderr,
                 "%s: hint: download a model with:\n"
-                "  huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models\n"
+                "  hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models\n"
                 "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n",
                 __func__);
+        return 1;
+    }
+    if (params.classify && params.topk > model.hparams.num_classes) {
+        fprintf(stderr, "%s: --topk (%u) cannot exceed the model's %u classes\n", __func__, params.topk,
+                model.hparams.num_classes);
+        ggml_free(model.ctx);
+        ggml_backend_buffer_free(model.buffer);
+        ggml_backend_free(model.backend);
         return 1;
     }
 

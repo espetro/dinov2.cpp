@@ -21,7 +21,7 @@ Download a GGUF weight from the
 profile:
 
 ```bash
-huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
+hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 # file on disk: models/model.gguf
 ```
 
@@ -33,7 +33,7 @@ q4_0 through q8_0): point `-m` at whichever GGUF you have.
 For patch and dense feature work, start with the register-token small model:
 
 ```bash
-huggingface-cli download dinov2-cpp-core/dinov2-with-registers-small-gguf --local-dir models
+hf download dinov2-cpp-core/dinov2-with-registers-small-gguf --local-dir models
 ```
 
 The same `dinov2-with-registers-{size}-gguf` naming pattern is available for
@@ -58,7 +58,7 @@ wording. Flags that take a value read it from the next argument.
 | `-s N`, `--seed` | 42 | RNG seed |
 | `--batch N` | 1 | max images per forward pass (max 64); inputs run in chunks of N |
 | `-c`, `--classify` | off | classify each input image and print top-k labels |
-| `-k N`, `--topk` | 5 | number of classes printed with `-c` |
+| `-k N`, `--topk` | 5 | number of classes printed with `-c`; must not exceed the model's class count |
 | `--print-embeddings` | off | emit one JSON object for one input; one JSON object per line (JSONL) for multiple inputs |
 | `--embeddings-binary` | off | write preview binary embeddings to `-o`; no embedding bytes go to stdout |
 | `--print-patch-tokens` | off | add per-patch token vectors to the embedding output |
@@ -355,7 +355,7 @@ see [benchmarks.md](benchmarks.md) for methodology.
 ### Quantized variants
 
 ```bash
-huggingface-cli download dinov2-cpp-core/dinov2-base-gguf --local-dir models/dinov2-base
+hf download dinov2-cpp-core/dinov2-base-gguf --local-dir models/dinov2-base
 dinov2-cli -m models/dinov2-base/model.gguf -i assets/tench.jpg -c
 ```
 
@@ -381,7 +381,7 @@ less accurate, so avoid it when comparing against HF outputs.
 | 1 | unknown argument, no input images, image load failure, model load failure, mixed-size batch chunk, no output mode selected, or graph compute failure |
 
 Error messages go to stderr; the model-load failure also prints the
-`huggingface-cli download` hint shown above.
+`hf download` hint shown above.
 
 ## Troubleshooting
 
@@ -390,7 +390,7 @@ Each `dinov2-cpp-core` repo ships its weight as `model.gguf`, so
 `--local-dir models` produces `models/model.gguf`. Re-download with:
 
 ```bash
-huggingface-cli download dinov2-cpp-core/dinov2-small-gguf --local-dir models
+hf download dinov2-cpp-core/dinov2-small-gguf --local-dir models
 ```
 
 **`-c` always runs at 224x224**: classification follows the HF
