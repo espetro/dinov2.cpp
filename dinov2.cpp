@@ -548,19 +548,28 @@ struct ggml_tensor *attn(struct ggml_tensor *cur, const float scale, const int i
     // std::cout << "K type " << ggml_type_name(K->type) << std::endl;
 
     if (params.enable_flash_attn) {
-        const int64_t total_patches_padding = GGML_PAD(total_patches, 32);
-        const int64_t total_patches_to_pad  = total_patches_padding - total_patches;
+        // Only the head dim (ne[0]) may need padding, and it is
+        // n_enc_head_dim, not hidden_size. The KV seq dim needs no padding at
+        // all: ggml_flash_attn_ext only requires ggml_can_mul_mat(k, q)
+        // (ggml.c:5506), the CPU kernel iterates an arbitrary KV length (the
+        // tiled path pads the KV tail with -inf internally, ops.cpp), and
+        // Metal pads KV internally (flash_attn_ext_pad). Padding K/V with
+        // zeros and no mask let each padded key vote exp(0) into the softmax
+        // denominator while its zero V row diluted the numerator.
+        const int64_t head_dim_to_pad = GGML_PAD(n_enc_head_dim, 4) - n_enc_head_dim;
 
-        const int64_t hidden_size_padding = GGML_PAD(hidden_size, 4);
-        const int64_t hidden_size_to_pad  = hidden_size_padding - hidden_size;
+        // Q-seq padding is kept: the extra output rows are trimmed below
+        const int64_t total_patches_to_pad = GGML_PAD(total_patches, 32) - total_patches;
 
         V = ggml_cont(ctx_cgraph, ggml_permute(ctx_cgraph, V, 0, 2, 1, 3));
 
-        Q = ggml_pad(ctx_cgraph, Q, hidden_size_to_pad, total_patches_to_pad, 0, 0);
-
-        K = ggml_pad(ctx_cgraph, K, hidden_size_to_pad, total_patches_to_pad, 0, 0);
-
-        V = ggml_pad(ctx_cgraph, V, hidden_size_to_pad, total_patches_to_pad, 0, 0);
+        if (head_dim_to_pad > 0 || total_patches_to_pad > 0) {
+            Q = ggml_pad(ctx_cgraph, Q, (int)head_dim_to_pad, (int)total_patches_to_pad, 0, 0);
+        }
+        if (head_dim_to_pad > 0) {
+            K = ggml_pad(ctx_cgraph, K, (int)head_dim_to_pad, 0, 0, 0);
+            V = ggml_pad(ctx_cgraph, V, (int)head_dim_to_pad, 0, 0, 0);
+        }
 
         const ggml_type dtype = model.tensors.at(base_layer_name + ".attention.attention.qkv.weight")->type;
 
@@ -568,7 +577,9 @@ struct ggml_tensor *attn(struct ggml_tensor *cur, const float scale, const int i
         V = ggml_cast(ctx_cgraph, V, dtype);
 
         struct ggml_tensor *KQV = ggml_flash_attn_ext(ctx_cgraph, Q, K, V, nullptr, scale, 0.0f, 0.0f);
-        KQV = ggml_view_4d(ctx_cgraph, KQV, KQV->ne[0], KQV->ne[1], KQV->ne[2] - total_patches_to_pad, KQV->ne[3],
+        // trim the padded head-dim entries (ne[0]) and the padded query rows
+        // (ne[2]) the pads introduced
+        KQV = ggml_view_4d(ctx_cgraph, KQV, n_enc_head_dim, KQV->ne[1], KQV->ne[2] - total_patches_to_pad, KQV->ne[3],
                            KQV->nb[1], KQV->nb[2], KQV->nb[3], 0);
 
         // the unpad view is non-contiguous across the batch dim when
