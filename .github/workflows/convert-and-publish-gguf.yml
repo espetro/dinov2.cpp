@@ -63,7 +63,9 @@ jobs:
   publish:
     name: Convert ${{ matrix.variant }}
     needs: [plan, validate]
-    if: ${{ !cancelled() && needs.validate.result == 'success' }}
+    # validate is skipped for single-variant dispatch, which is fine: skipped
+    # means "not requested", not "failed". Only failure or cancellation gates.
+    if: ${{ !cancelled() && needs.validate.result != 'failure' && needs.validate.result != 'cancelled' }}
     # Stays on ubuntu-latest (~14 GB free) instead of ubuntu-latest-large.
     # The conversion script installs a lean torch-CPU + transformers venv and
     # aggressively clears the HF hub cache after upload, which is enough to fit
