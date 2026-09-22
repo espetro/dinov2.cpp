@@ -161,14 +161,30 @@ std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embe
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
                                 const dino_ctx_options &options, bool classify, size_t graph_size);
 
-// Batch inference: runs the model on up to options.n_batch preprocessed images
-// and returns one dino_output per image, in input order. All images must share
-// the same dimensions (they are packed into a single graph whose batch
-// dimension is imgs.size()). Returns an empty vector on failure.
-std::vector<dino_output> dino_predict(const dino_model &model, const std::vector<ImageF> &imgs,
-                                      const dino_ctx_options &options, const dino_run_options &run,
-                                      ggml_gallocr_t allocr);
+// Inference context: owns the graph allocator (to become the backend
+// scheduler), the options applied to every run, and the outputs of the most
+// recent predict call. Create one per model after dino_model_load. Not
+// thread-safe; concurrent runs need one context each.
+struct dino_ctx {
+    dino_ctx_options          options;
+    ggml_gallocr_t            allocr = nullptr;
+    std::vector<dino_output>  last_outputs; // owned by the ctx; overwritten on each predict
+};
 
-// Single-image convenience wrapper around the batch form.
-std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img, const dino_ctx_options &options,
-                                          const dino_run_options &run, ggml_gallocr_t allocr);
+bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_options &options);
+
+void dino_ctx_free(dino_ctx &ctx);
+
+// Batch inference: runs the model on up to ctx.options.n_batch preprocessed
+// images and stores one dino_output per image, in input order, into
+// ctx.last_outputs. All images must share the same dimensions (they are packed
+// into a single graph whose batch dimension is imgs.size()). The returned
+// reference is invalidated by the next dino_predict call on ctx; an empty
+// vector signals failure.
+const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx,
+                                             const std::vector<ImageF> &imgs, const dino_run_options &run);
+
+// Single-image convenience wrapper around the batch form. Returns nullptr on
+// failure, otherwise a pointer into ctx.last_outputs.
+const dino_output *dino_predict(const dino_model &model, dino_ctx &ctx, const ImageF &img,
+                                const dino_run_options &run);

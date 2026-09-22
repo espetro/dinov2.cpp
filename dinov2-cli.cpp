@@ -607,9 +607,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // error paths after this point must release the model (the Metal backend
-    // aborts at process exit if its buffers were never freed)
-    auto free_model = [&]() { dino_model_unload(model); };
+    // error paths after this point must release the context and model (the
+    // Metal backend aborts at process exit if its buffers were never freed)
+    dino_ctx ctx;
+    auto     free_model = [&]() {
+        dino_ctx_free(ctx);
+        dino_model_unload(model);
+    };
 
     // preprocess every input; classify mode always yields 224x224 crops
     std::vector<ImageF> imgs_f;
@@ -677,9 +681,8 @@ int main(int argc, char **argv) {
     // prepare for graph computation, memory allocation and results processing
     {
         ggml_backend_synchronize(model.backend);
-        ggml_gallocr_t allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
-        if (!allocr) {
-            fprintf(stderr, "%s: failed to create graph allocator\n", __func__);
+        if (!dino_ctx_init(ctx, model, params.ctx_opts)) {
+            fprintf(stderr, "%s: failed to create inference context\n", __func__);
             free_model();
             return 1;
         }
@@ -690,14 +693,13 @@ int main(int argc, char **argv) {
             for (size_t s = 0; s < imgs_f.size(); s += params.ctx_opts.n_batch) {
                 const size_t              e       = std::min(s + (size_t)params.ctx_opts.n_batch, imgs_f.size());
                 const std::vector<ImageF> chunk   = {imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e};
-                const int64_t             t0      = ggml_time_ms();
-                std::vector<dino_output>  outputs = dino_predict(model, chunk, params.ctx_opts, params.run_opts, allocr);
+                const int64_t                    t0      = ggml_time_ms();
+                const std::vector<dino_output>  &outputs = dino_predict(model, ctx, chunk, params.run_opts);
                 ggml_backend_synchronize(model.backend);
                 const int64_t dt_ms = ggml_time_ms() - t0;
                 fprintf(stderr, "%s: graph computation took %lld ms\n", __func__, dt_ms);
 
                 if (outputs.empty()) {
-                    ggml_gallocr_free(allocr);
                     free_model();
                     return 1;
                 }
@@ -722,7 +724,6 @@ int main(int argc, char **argv) {
                                                      params.print_patch_tokens, params.run_opts.l2_normalize, error)) {
                             fprintf(stderr, "%s: failed to write binary embeddings '%s': %s\n", __func__,
                                     out_path.c_str(), error.c_str());
-                            ggml_gallocr_free(allocr);
                             free_model();
                             return 1;
                         }
@@ -761,8 +762,7 @@ int main(int argc, char **argv) {
                 }
             }
 
-            ggml_gallocr_free(allocr);
-            dino_model_unload(model);
+            free_model();
         } else {
             // Bench path: bench_warmup warmup runs (discarded), then bench_repeats timed runs.
             // Each run processes every input image in chunks of n_batch.
@@ -783,8 +783,7 @@ int main(int argc, char **argv) {
             for (uint32_t i = 0; i < params.bench_warmup + params.bench_repeats; ++i) {
                 int64_t t0 = ggml_time_ms();
                 for (const std::vector<ImageF> &chunk : chunks) {
-                    if (dino_predict(model, chunk, params.ctx_opts, params.run_opts, allocr).empty()) {
-                        ggml_gallocr_free(allocr);
+                    if (dino_predict(model, ctx, chunk, params.run_opts).empty()) {
                         free_model();
                         return 1;
                     }
@@ -872,8 +871,7 @@ int main(int argc, char **argv) {
                         imgs_f.size(), params.ctx_opts.n_batch, mean, stddev, mn, mx, peak_rss_mb, ms_per_image, images_per_sec);
             }
 
-            ggml_gallocr_free(allocr);
-            dino_model_unload(model);
+            free_model();
         }
     }
 

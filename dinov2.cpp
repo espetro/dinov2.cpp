@@ -889,16 +889,36 @@ bool dino_batch_size_valid(int64_t n) {
     return n >= 1 && n <= (int64_t)DINO_MAX_BATCH;
 }
 
-std::vector<dino_output> dino_predict(const dino_model &model, const std::vector<ImageF> &imgs,
-                                      const dino_ctx_options &options, const dino_run_options &run,
-                                      ggml_gallocr_t allocr) {
+bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_options &options) {
+    ctx.options = options;
+    ctx.allocr  = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
+    if (!ctx.allocr) {
+        fprintf(stderr, "%s: ggml_gallocr_new() failed\n", __func__);
+        return false;
+    }
+    return true;
+}
+
+void dino_ctx_free(dino_ctx &ctx) {
+    ctx.last_outputs.clear();
+    if (ctx.allocr) {
+        ggml_gallocr_free(ctx.allocr);
+        ctx.allocr = nullptr;
+    }
+    ctx.options = dino_ctx_options{};
+}
+
+const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx,
+                                             const std::vector<ImageF> &imgs, const dino_run_options &run) {
+    ctx.last_outputs.clear();
+    const dino_ctx_options &options = ctx.options;
     if (imgs.empty()) {
         fprintf(stderr, "%s: no input images\n", __func__);
-        return {};
+        return ctx.last_outputs;
     }
     if (imgs.size() > options.n_batch) {
         fprintf(stderr, "%s: %zu images exceed n_batch = %u\n", __func__, imgs.size(), options.n_batch);
-        return {};
+        return ctx.last_outputs;
     }
     // a single graph is built for the whole batch, so every image must share
     // the same dimensions (preprocessing decides the graph's input size)
@@ -908,13 +928,13 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
         if (img.nx != nx || img.ny != ny) {
             fprintf(stderr, "%s: batch images must share dimensions (%dx%d vs %dx%d)\n", __func__, img.nx, img.ny, nx,
                     ny);
-            return {};
+            return ctx.last_outputs;
         }
         // the planar deinterleave below indexes data[i * 3 + c]
         if (img.c != 3 || img.data.size() != (size_t)img.nx * img.ny * 3) {
             fprintf(stderr, "%s: expected a 3-channel float image of %dx%d (%zu values), got c=%d, %zu values\n",
                     __func__, img.nx, img.ny, (size_t)img.nx * img.ny * 3, img.c, img.data.size());
-            return {};
+            return ctx.last_outputs;
         }
     }
 
@@ -948,17 +968,17 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     struct ggml_context *ctx_cgraph = ggml_init(params0);
     if (!ctx_cgraph) {
         fprintf(stderr, "%s: ggml_init() failed\n", __func__);
-        return {};
+        return ctx.last_outputs;
     }
     struct ggml_cgraph *gf = build_graph({nx, ny}, ctx_cgraph, model, batch_options, run.classify, graph_size);
 
-    if (!ggml_gallocr_alloc_graph(allocr, gf)) {
+    if (!ggml_gallocr_alloc_graph(ctx.allocr, gf)) {
         fprintf(stderr,
                 "%s: failed to allocate compute graph for a %d x %d input (%lld patch tokens); "
                 "reduce input size or use --preprocess crop518 / --max-tokens\n",
                 __func__, nx, ny, (long long)num_patches);
         ggml_free(ctx_cgraph);
-        return {};
+        return ctx.last_outputs;
     }
 
     struct ggml_tensor *input = ggml_graph_get_tensor(gf, "input");
@@ -996,10 +1016,11 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     if (ggml_backend_graph_compute(model.backend, gf) != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "%s: ggml_backend_graph_compute() failed\n", __func__);
         ggml_free(ctx_cgraph);
-        return {};
+        return ctx.last_outputs;
     }
 
-    std::vector<dino_output> outputs(n_batch);
+    ctx.last_outputs.resize(n_batch);
+    std::vector<dino_output> &outputs = ctx.last_outputs;
     // every output records the patch grid of the shared input dimensions
     for (dino_output &output : outputs) {
         output.grid_w = nx / (int)model.hparams.patch_size;
@@ -1101,14 +1122,14 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     // free memory
     ggml_free(ctx_cgraph);
 
-    return outputs;
+    return ctx.last_outputs;
 }
 
-std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img, const dino_ctx_options &options,
-                                          const dino_run_options &run, ggml_gallocr_t allocr) {
-    std::vector<dino_output> outputs = dino_predict(model, std::vector<ImageF>{img}, options, run, allocr);
+const dino_output *dino_predict(const dino_model &model, dino_ctx &ctx, const ImageF &img,
+                                const dino_run_options &run) {
+    const std::vector<dino_output> &outputs = dino_predict(model, ctx, std::vector<ImageF>{img}, run);
     if (outputs.empty()) {
         return nullptr;
     }
-    return std::make_unique<dino_output>(std::move(outputs[0]));
+    return &outputs[0];
 }
