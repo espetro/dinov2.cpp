@@ -44,7 +44,8 @@ typedef struct dino_ctx   dino_ctx;
 typedef enum dino_status {
     DINO_STATUS_SUCCESS          = 0,
     DINO_STATUS_ERROR            = 1, // unspecified internal failure
-    DINO_STATUS_INVALID_ARGUMENT = 2, // null pointers, bad dims/stride, n_images out of range, topk == 0 or > n_classes
+    DINO_STATUS_INVALID_ARGUMENT = 2, // null pointers, bad dims/stride, n_images out of range,
+                                      // classify topk < 1 or > n_classes
     DINO_STATUS_ALLOC_FAILED     = 3, // compute graph buffer allocation failed
     DINO_STATUS_COMPUTE_FAILED   = 4, // backend graph compute failed
     DINO_STATUS_NO_CLASSIFIER    = 5, // classify requested on a backbone-only model

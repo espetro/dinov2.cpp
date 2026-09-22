@@ -462,12 +462,14 @@ TEST_CASE("c api: error paths return status codes") {
     bad.stride = img.width * 3 - 1; // stride shorter than one row
     CHECK(dino_encode(ctx, &bad, 1, run) == DINO_STATUS_INVALID_ARGUMENT);
 
+    // topk is ignored in feature mode: 0 is accepted there but rejected
+    // once classify is requested
     dino_run_params bad_run = run;
     bad_run.topk            = 0;
-    CHECK(dino_encode(ctx, &img, 1, bad_run) == DINO_STATUS_INVALID_ARGUMENT);
-    bad_run          = run;
+    CHECK(dino_encode(ctx, &img, 1, bad_run) == DINO_STATUS_SUCCESS);
     bad_run.classify = true;
-    bad_run.topk     = 8; // more than the fixture's 7 classes
+    CHECK(dino_encode(ctx, &img, 1, bad_run) == DINO_STATUS_INVALID_ARGUMENT);
+    bad_run.topk = 8; // more than the fixture's 7 classes
     CHECK(dino_encode(ctx, &img, 1, bad_run) == DINO_STATUS_INVALID_ARGUMENT);
 
     // classify on a backbone-only model: NO_CLASSIFIER, not a crash

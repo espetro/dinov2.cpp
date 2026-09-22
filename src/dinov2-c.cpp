@@ -87,14 +87,11 @@ enum dino_status encode_impl(dino_ctx &ctx, const dino_image *images, int32_t n_
     if (!images || n_images < 1 || n_images > (int32_t)DINO_MAX_BATCH) {
         return DINO_STATUS_INVALID_ARGUMENT;
     }
-    if (params.topk < 1) {
-        return DINO_STATUS_INVALID_ARGUMENT;
-    }
     if (params.classify) {
         if (!model.has_classifier) {
             return DINO_STATUS_NO_CLASSIFIER;
         }
-        if ((uint32_t)params.topk > model.hparams.num_classes) {
+        if (params.topk < 1 || (uint32_t)params.topk > model.hparams.num_classes) {
             return DINO_STATUS_INVALID_ARGUMENT;
         }
     }
