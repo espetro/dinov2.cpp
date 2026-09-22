@@ -65,3 +65,4 @@ the 256 shortest edge) against `facebook/dinov2-small` backbone under
 
 * [Regular small classifier, 2026-09-21](2026-09-21-small-regular.md)
 * [Register small classifier, 2026-09-21](2026-09-21-small-registers.md)
+* [Audit-hardening rerun, both small checkpoints, 2026-09-22](2026-09-22-audit-hardening.md)
