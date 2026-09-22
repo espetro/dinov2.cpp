@@ -2,8 +2,7 @@
 
 #include "dinov2.h"
 #include "ggml.h"
-#include "ggml-cpu.h"
-#include "ggml-alloc.h"
+#include "ggml-backend.h"
 #include "gguf.h"
 #include "src/image.h"
 #include <regex>
@@ -20,14 +19,7 @@
 #include <algorithm>
 #include <charconv>
 #include <iostream>
-
-#ifdef GGML_USE_CUDA
-#include "ggml-cuda.h"
-#endif
-
-#ifdef GGML_USE_METAL
-#include "ggml-metal.h"
-#endif
+#include <mutex>
 
 #if defined(_MSC_VER)
 #pragma warning(disable : 4244 4267) // possible loss of data
@@ -204,33 +196,69 @@ std::vector<float> interpolate_pos_embed(const ImgSize       img_size,
     return pos_embed_new;
 }
 
+ggml_backend_t dino_backend_init(const char *device_name) {
+    // Populate the registry exactly once: a reg_count()==0 guard cannot work
+    // because merely touching the registry lazily registers the built-in CPU
+    // backend, so the count is never 0 when observed.
+    static std::once_flag backends_loaded;
+    std::call_once(backends_loaded, ggml_backend_load_all);
+    if (device_name && device_name[0] != '\0') {
+        ggml_backend_t backend = ggml_backend_init_by_name(device_name, nullptr);
+        if (!backend) {
+            fprintf(stderr, "%s: no ggml device named '%s'\n", __func__, device_name);
+        }
+        return backend;
+    }
+    ggml_backend_t backend = ggml_backend_init_best();
+    if (!backend) {
+        fprintf(stderr, "%s: ggml_backend_init_best() failed\n", __func__);
+    }
+    return backend;
+}
+
+// Apply the thread count through the backend's registry entry point so this
+// works on any backend that exports "ggml_backend_set_n_threads" (CPU does)
+// and silently no-ops elsewhere.
+static void dino_backend_set_n_threads(ggml_backend_t backend, int n_threads) {
+    ggml_backend_dev_t dev = ggml_backend_get_device(backend);
+    ggml_backend_reg_t reg = dev ? ggml_backend_dev_backend_reg(dev) : nullptr;
+    if (!reg) {
+        return;
+    }
+    auto set_n_threads =
+        (ggml_backend_set_n_threads_t)ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads");
+    if (set_n_threads) {
+        set_n_threads(backend, n_threads);
+    }
+}
+
+// Historical label for stderr messages ("using Metal backend", ...). The
+// registry name is the stable identifier; "MTL" maps back to the
+// ifdef-era "Metal" text so the CLI output is unchanged.
+static const char *dino_backend_display_name(ggml_backend_t backend) {
+    ggml_backend_dev_t dev  = ggml_backend_get_device(backend);
+    ggml_backend_reg_t reg  = dev ? ggml_backend_dev_backend_reg(dev) : nullptr;
+    const char        *name = reg ? ggml_backend_reg_name(reg) : nullptr;
+    if (name && strcmp(name, "MTL") == 0) {
+        return "Metal";
+    }
+    return name ? name : "unknown";
+}
+
+// Backend init shared by all load entry points; the caller prints the
+// "using ... backend" line itself so __func__ keeps the public name.
+static bool dino_model_load_begin(dino_model &model, const dino_model_options &options) {
+    model.backend = dino_backend_init(options.device.empty() ? nullptr : options.device.c_str());
+    return model.backend != nullptr;
+}
+
 // load the model's weights from a file following the ggml format(gguf)
 bool dino_model_load(const std::string &fname, dino_model &model, const dino_model_options &options) {
     fprintf(stderr, "%s: loading model from '%s' - please wait\n", __func__, fname.c_str());
-#ifdef GGML_USE_CUDA
-    fprintf(stderr, "%s: using CUDA backend\n", __func__);
-    model.backend = ggml_backend_cuda_init(0); // init device 0
-    if (!model.backend) {
-        fprintf(stderr, "%s: ggml_backend_cuda_init() failed\n", __func__);
+    if (!dino_model_load_begin(model, options)) {
+        return false;
     }
-#endif
-
-#ifdef GGML_USE_METAL
-    fprintf(stderr, "%s: using Metal backend\n", __func__);
-    model.backend = ggml_backend_metal_init();
-    if (!model.backend) {
-        fprintf(stderr, "%s: ggml_backend_metal_init() failed\n", __func__);
-    }
-#endif
-
-    // if there aren't GPU Backends fallback to CPU backend
-    if (!model.backend) {
-        model.backend = ggml_backend_cpu_init();
-        if (!model.backend) {
-            fprintf(stderr, "%s: ggml_backend_cpu_init() failed\n", __func__);
-            return false;
-        }
-    }
+    fprintf(stderr, "%s: using %s backend\n", __func__, dino_backend_display_name(model.backend));
 
     // Releases the gguf metadata context, the scratch tensor context and any
     // partially initialized model state when the load fails; on success the
@@ -890,21 +918,56 @@ bool dino_batch_size_valid(int64_t n) {
 }
 
 bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_options &options) {
+    ctx.model   = &model;
     ctx.options = options;
-    ctx.allocr  = ggml_gallocr_new(ggml_backend_get_default_buffer_type(model.backend));
-    if (!ctx.allocr) {
-        fprintf(stderr, "%s: ggml_gallocr_new() failed\n", __func__);
+    // the scheduler hash set must cover every node + leaf the encoder emits;
+    // same sizing expression as the cgraph in dino_predict
+    const size_t graph_size = (size_t)model.hparams.num_hidden_layers * 64 + 128;
+    // the scheduler requires a CPU backend in the last slot as the fallback
+    // for ops the primary backend cannot run
+    ggml_backend_t backends[2] = {model.backend, nullptr};
+    int            n_backends = 1;
+    if (ggml_backend_dev_type(ggml_backend_get_device(model.backend)) != GGML_BACKEND_DEVICE_TYPE_CPU) {
+        ctx.cpu_fallback = dino_backend_init("CPU");
+        if (!ctx.cpu_fallback) {
+            fprintf(stderr, "%s: failed to init CPU fallback backend\n", __func__);
+            ctx.model = nullptr;
+            return false;
+        }
+        backends[1] = ctx.cpu_fallback;
+        n_backends  = 2;
+    }
+    ctx.sched = ggml_backend_sched_new(backends, nullptr, n_backends, graph_size, /*parallel*/ false,
+                                       /*op_offload*/ false);
+    if (!ctx.sched) {
+        fprintf(stderr, "%s: ggml_backend_sched_new() failed\n", __func__);
+        if (ctx.cpu_fallback) {
+            ggml_backend_free(ctx.cpu_fallback);
+            ctx.cpu_fallback = nullptr;
+        }
+        ctx.model = nullptr;
         return false;
+    }
+    // thread count goes through the registry proc address so it works on any
+    // backend that exports it; apply to every sched backend (offloaded ops
+    // run on the CPU tail)
+    for (int i = 0; i < n_backends; ++i) {
+        dino_backend_set_n_threads(backends[i], (int)options.n_threads);
     }
     return true;
 }
 
 void dino_ctx_free(dino_ctx &ctx) {
     ctx.last_outputs.clear();
-    if (ctx.allocr) {
-        ggml_gallocr_free(ctx.allocr);
-        ctx.allocr = nullptr;
+    if (ctx.sched) {
+        ggml_backend_sched_free(ctx.sched);
+        ctx.sched = nullptr;
     }
+    if (ctx.cpu_fallback) {
+        ggml_backend_free(ctx.cpu_fallback);
+        ctx.cpu_fallback = nullptr;
+    }
+    ctx.model   = nullptr;
     ctx.options = dino_ctx_options{};
 }
 
@@ -938,11 +1001,6 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
         }
     }
 
-    // apply the thread count here until dino_ctx owns the backend plumbing
-    if (ggml_backend_is_cpu(model.backend)) {
-        ggml_backend_cpu_set_n_threads(model.backend, options.n_threads);
-    }
-
     // the graph batch dimension is the number of images actually provided
     dino_ctx_options batch_options  = options;
     batch_options.n_batch           = (uint32_t)imgs.size();
@@ -963,7 +1021,7 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
     struct ggml_init_params params0 = {
         /*.mem_size   =*/ggml_tensor_overhead() * graph_size + ggml_graph_overhead_custom(graph_size, false),
         /*.mem_buffer =*/nullptr,
-        /*.no_alloc   =*/true, // the tensors will be allocated later by ggml_gallocr_alloc_graph()
+        /*.no_alloc   =*/true, // the tensors will be allocated later by ggml_backend_sched_alloc_graph()
     };
     struct ggml_context *ctx_cgraph = ggml_init(params0);
     if (!ctx_cgraph) {
@@ -972,7 +1030,10 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
     }
     struct ggml_cgraph *gf = build_graph({nx, ny}, ctx_cgraph, model, batch_options, run.classify, graph_size);
 
-    if (!ggml_gallocr_alloc_graph(ctx.allocr, gf)) {
+    // the scheduler owns the graph allocator; reset drops the previous run's
+    // allocation state before this (possibly different-shaped) graph
+    ggml_backend_sched_reset(ctx.sched);
+    if (!ggml_backend_sched_alloc_graph(ctx.sched, gf)) {
         fprintf(stderr,
                 "%s: failed to allocate compute graph for a %d x %d input (%lld patch tokens); "
                 "reduce input size or use --preprocess crop518 / --max-tokens\n",
@@ -1013,8 +1074,8 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
 
     ggml_backend_tensor_set(pos_embed_fixed, pos_embed_fixed_data.data(), 0, ggml_nbytes(pos_embed_fixed));
 
-    if (ggml_backend_graph_compute(model.backend, gf) != GGML_STATUS_SUCCESS) {
-        fprintf(stderr, "%s: ggml_backend_graph_compute() failed\n", __func__);
+    if (ggml_backend_sched_graph_compute(ctx.sched, gf) != GGML_STATUS_SUCCESS) {
+        fprintf(stderr, "%s: ggml_backend_sched_graph_compute() failed\n", __func__);
         ggml_free(ctx_cgraph);
         return ctx.last_outputs;
     }

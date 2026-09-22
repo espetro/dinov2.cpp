@@ -5,7 +5,7 @@
 // in include/dinov2.h.
 
 #include "ggml.h"
-#include "ggml-alloc.h"
+#include "ggml-backend.h"
 #include <fstream>
 #include <map>
 #include <string>
@@ -90,8 +90,15 @@ inline uint64_t dino_default_max_tokens(uint32_t patch_size) {
 
 // Model-load settings (the public dino_model_params mirrors this).
 struct dino_model_options {
-    bool require_classifier = false; // fail load unless the GGUF carries a classifier head + labels
+    bool        require_classifier = false; // fail load unless the GGUF carries a classifier head + labels
+    std::string device;                     // "" = auto (ggml_backend_init_best); else a ggml device name
 };
+
+// Initialize a compute backend through the ggml registry. Loads dynamic
+// backends lazily (ggml_backend_load_all) when the registry is empty, then
+// returns ggml_backend_init_by_name(device_name) for a non-empty name or
+// ggml_backend_init_best() otherwise. Returns nullptr on failure.
+ggml_backend_t dino_backend_init(const char *device_name);
 
 // Context settings: compute capacity + feature-mode preprocessing recipe
 // (the public dino_ctx_params mirrors this).
@@ -161,13 +168,17 @@ std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embe
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
                                 const dino_ctx_options &options, bool classify, size_t graph_size);
 
-// Inference context: owns the graph allocator (to become the backend
-// scheduler), the options applied to every run, and the outputs of the most
+// Inference context: owns the backend scheduler (which owns the graph
+// allocator), the options applied to every run, and the outputs of the most
 // recent predict call. Create one per model after dino_model_load. Not
 // thread-safe; concurrent runs need one context each.
 struct dino_ctx {
+    const dino_model         *model = nullptr; // borrowed; must outlive the ctx
     dino_ctx_options          options;
-    ggml_gallocr_t            allocr = nullptr;
+    ggml_backend_sched_t      sched        = nullptr;
+    // owned fallback for ops the model's backend cannot run; only set when
+    // model.backend is not CPU (ggml_backend_sched requires a CPU tail)
+    ggml_backend_t            cpu_fallback = nullptr;
     std::vector<dino_output>  last_outputs; // owned by the ctx; overwritten on each predict
 };
 

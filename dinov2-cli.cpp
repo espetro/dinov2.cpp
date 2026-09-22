@@ -2,7 +2,6 @@
 #include "dinov2.h"
 #include "ggml.h"
 #include "src/image.h"
-#include "ggml-alloc.h"
 #if defined(_WIN32)
 #include <windows.h>
 #include <psapi.h>
@@ -695,7 +694,7 @@ int main(int argc, char **argv) {
                 const std::vector<ImageF> chunk   = {imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e};
                 const int64_t                    t0      = ggml_time_ms();
                 const std::vector<dino_output>  &outputs = dino_predict(model, ctx, chunk, params.run_opts);
-                ggml_backend_synchronize(model.backend);
+                ggml_backend_sched_synchronize(ctx.sched);
                 const int64_t dt_ms = ggml_time_ms() - t0;
                 fprintf(stderr, "%s: graph computation took %lld ms\n", __func__, dt_ms);
 
@@ -788,7 +787,7 @@ int main(int argc, char **argv) {
                         return 1;
                     }
                 }
-                ggml_backend_synchronize(model.backend);
+                ggml_backend_sched_synchronize(ctx.sched);
                 int64_t dt_ms = ggml_time_ms() - t0;
                 if (i >= params.bench_warmup) {
                     samples.push_back((double)dt_ms);
