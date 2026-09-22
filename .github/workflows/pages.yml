@@ -1,0 +1,71 @@
+name: pages
+
+# Builds the wasm demo and deploys it to GitHub Pages so index.html is
+# hostable without committing a model (the page defaults to a Hugging Face
+# /resolve/ URL, which sends CORS headers).
+#
+# One-time prereq: in repo Settings -> Pages, set Source to "GitHub Actions".
+# The github-pages environment is created automatically on first deploy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wasm/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure (wasm preset)
+        run: cmake --preset wasm
+
+      - name: Build dinov2-wasm
+        run: cmake --build --preset wasm -j"$(nproc)"
+
+      - name: Stage site
+        run: |
+          mkdir -p site
+          cp wasm/index.html wasm/main.js site/
+          cp build-wasm/bin/dinov2-wasm.js build-wasm/bin/dinov2-wasm.wasm site/
+          ls -lh site/
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

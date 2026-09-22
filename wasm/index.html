@@ -30,14 +30,16 @@
 <fieldset>
   <legend>1. Model</legend>
   <label>GGUF URL
-    <input id="modelUrl" type="text" value="model.gguf"
+    <input id="modelUrl" type="text"
+           value="https://huggingface.co/dinov2-cpp-core/dinov2-with-registers-small-gguf/resolve/main/model.gguf"
            placeholder="model.gguf or https://huggingface.co/dinov2-cpp-core/dinov2-small-gguf/resolve/main/model.gguf">
   </label>
   <p class="hint">
-    Default <code>model.gguf</code> is fetched relative to this page: drop a GGUF next to
-    <code>index.html</code>. huggingface.co <code>/resolve/</code> URLs send CORS headers, so
-    e.g. <code>https://huggingface.co/dinov2-cpp-core/dinov2-small-gguf/resolve/main/model.gguf</code>
-    (~50 MB f16 ViT-S) also works directly.
+    Default is the ViT-S with registers GGUF fetched straight from Hugging Face:
+    <code>/resolve/</code> URLs send CORS headers, so the hosted demo works with
+    no model committed. Register tokens give cleaner patch heatmaps. A relative
+    <code>model.gguf</code> also works if you drop a GGUF next to
+    <code>index.html</code>.
   </p>
   <button id="loadBtn">Load model</button>
   <progress id="modelProgress" value="0" max="1" hidden></progress>
