@@ -29,7 +29,11 @@ and on demand via `workflow_dispatch`.
 - The `giant` variants need ~12-13 GB transient disk, so those jobs free runner
   disk space first.
 
-## The 16 published repos
+## The 16 published variants
+
+The first 8 repos (classifier variants) are published. The
+`dinov2-backbone-*` rows are in the publish matrix but pending their first
+workflow run.
 
 | Variant | Source checkpoint | HF repo |
 |---|---|---|
