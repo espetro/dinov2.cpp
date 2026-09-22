@@ -20,6 +20,7 @@ option(DINOV2_FATAL_WARNINGS "Enable -Wall -Wextra -Wpedantic -Werror (MSVC: /W4
 option(DINOV2_BUILD_TESTS "Build doctest unit tests" ON)
 option(DINOV2_BUILD_CLI "Build the dinov2-cli executable" ON)
 option(DINOV2_BUILD_C_API "Build the pure C API (include/dinov2.h) into libdinov2" ON)
+option(DINOV2_BUILD_WASM "Build the Emscripten/WebAssembly target in wasm/ (tier-2)" OFF)
 
 # deps
 add_subdirectory(ggml)
@@ -115,4 +116,18 @@ if (DINOV2_BUILD_TESTS)
         dinov2_target_flags(test_cli)
         add_test(NAME test_cli COMMAND test_cli $<TARGET_FILE:dinov2-cli>)
     endif ()
+endif ()
+
+# wasm (tier-2): embind shim + browser demo over the C API. Off by default so
+# it can never block or alter the engine build; requires the Emscripten
+# toolchain (see the "wasm" preset in CMakePresets.json and docs/wasm.md).
+if (DINOV2_BUILD_WASM)
+    if (NOT EMSCRIPTEN)
+        message(FATAL_ERROR
+            "DINOV2_BUILD_WASM requires the Emscripten toolchain. "
+            "Activate emsdk (source emsdk/emsdk_env.sh) and configure with "
+            "cmake --preset wasm, or pass "
+            "-DCMAKE_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake")
+    endif ()
+    add_subdirectory(wasm)
 endif ()

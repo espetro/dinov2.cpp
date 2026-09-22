@@ -39,6 +39,21 @@
                 "CMAKE_CXX_FLAGS": "-fsanitize=undefined -fno-omit-frame-pointer -g",
                 "CMAKE_C_FLAGS": "-fsanitize=undefined -fno-omit-frame-pointer -g"
             }
+        },
+        {
+            "name": "wasm",
+            "inherits": "base",
+            "generator": "Unix Makefiles",
+            "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "DINOV2_BUILD_WASM": "ON",
+                "DINOV2_BUILD_CLI": "OFF",
+                "DINOV2_BUILD_TESTS": "OFF",
+                "DINOV2_FATAL_WARNINGS": "OFF",
+                "EMSCRIPTEN_SYSTEM_PROCESSOR": "wasm32",
+                "GGML_OPENMP": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -57,6 +72,10 @@
         {
             "name": "ubsan",
             "configurePreset": "ubsan"
+        },
+        {
+            "name": "wasm",
+            "configurePreset": "wasm"
         }
     ],
     "testPresets": [
