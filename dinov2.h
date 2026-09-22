@@ -82,7 +82,7 @@ inline uint64_t dino_default_max_tokens(uint32_t patch_size) {
 }
 
 struct dino_params {
-    int32_t     seed               = 42;
+    int32_t     seed               = 42; // unused: no RNG in inference; kept for API compatibility
     uint32_t    topk               = 5;
     uint32_t    n_batch            = 1; // max images per forward pass
     bool        enable_flash_attn  = false;
@@ -96,8 +96,7 @@ struct dino_params {
     // input image paths; -i repeats or comma-separates to add more than one.
     // Images are forwarded to dino_predict in chunks of n_batch.
     std::vector<std::string> fnames_inp = {"../assets/tench.jpg"};
-    std::string              image_out  = "";    // output of pca visualization (if used; a directory for multi-input)
-    float                    eps        = 1e-6f; // epsilon used in LN
+    std::string              image_out  = ""; // output of pca visualization (if used; a directory for multi-input)
     // Benchmark controls. bench_repeats=0 disables the bench loop (legacy single-shot path).
     // --bench with no count sets bench_repeats to 5 (the default for one-shot "is it faster").
     uint32_t bench_repeats = 0;

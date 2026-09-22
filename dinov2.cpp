@@ -637,7 +637,7 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
     const uint32_t num_register_tokens = model.hparams.num_register_tokens;
     const int      h0                  = img_size.height / model.hparams.patch_size;
     const int      w0                  = img_size.width / model.hparams.patch_size;
-    const int      num_patches         = h0 * w0;
+    const int64_t  num_patches         = (int64_t)h0 * w0;
     const int64_t  n_batch             = params.n_batch;
 
     const float scale = 1.0f / sqrtf(static_cast<float>(n_enc_head_dim));
@@ -754,7 +754,10 @@ void forward_features(const ImgSize img_size, struct ggml_cgraph *graph, struct 
             //         << model.tensors.at("encoder.layer." + std::to_string(il) + ".mlp.fc1.weight")->ne[3] <<
             //         std::endl;
 
-            if (model.hparams.num_hidden_layers == 40) {
+            // the FFN variant is decided by tensor presence, not a layer-count
+            // heuristic (the == 40 guess misclassifies any 40-layer non-SwiGLU
+            // model and any non-40-layer SwiGLU one)
+            if (model.tensors.count("encoder.layer." + std::to_string(il) + ".mlp.weights_in.weight") > 0) {
                 cur = swiglu_ffn(cur, il, ctx_cgraph, model, params);
             } else {
                 cur = mlp(cur, il, ctx_cgraph, model, params);
@@ -942,16 +945,16 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "Model:\n");
     fprintf(out, "  -m FNAME, --model     model path (default: %s)\n", params.model.c_str());
     fprintf(out, "  -fa, --flash_attn     enable flash attention, less accurate (default: off)\n");
-    fprintf(out, "  -t N, --threads       number of threads to use during computation, 1 or greater (default: %d)\n",
+    fprintf(out, "  -t N, --threads       number of threads to use during computation, 1 or greater (default: %u)\n",
             params.n_threads);
     fprintf(out, "\n");
     fprintf(out, "Input:\n");
     fprintf(out, "  -i FNAME, --inp       input image file; repeat or comma-separate for several\n");
     fprintf(out, "                        (default: %s)\n",
             params.fnames_inp.empty() ? "" : params.fnames_inp.front().c_str());
-    fprintf(out, "  -s N, --seed          signed 32-bit RNG seed (default: %d)\n", params.seed);
+    fprintf(out, "  -s N, --seed          accepted for compatibility; has no effect (default: %d)\n", params.seed);
     fprintf(out, "  --batch N             max images per forward pass; inputs run in chunks of N\n");
-    fprintf(out, "                        (default: %d, max: %d)\n", params.n_batch, DINO_MAX_BATCH);
+    fprintf(out, "                        (default: %u, max: %u)\n", params.n_batch, DINO_MAX_BATCH);
     fprintf(out, "\n");
     fprintf(out, "Preprocessing (feature mode only; rejected with -c):\n");
     fprintf(out, "  --preprocess MODE     bounded (default): resize shortest edge to %d when larger;\n",
@@ -965,7 +968,7 @@ void print_usage(FILE *out, int argc, char **argv, const dino_params &params) {
     fprintf(out, "\n");
     fprintf(out, "Output modes:\n");
     fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
-    fprintf(out, "  -k N, --topk          top k classes to print, 1 through model class count (default: %d)\n",
+    fprintf(out, "  -k N, --topk          top k classes to print, 1 through model class count (default: %u)\n",
             params.topk);
     fprintf(out, "  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)\n");
     fprintf(out, "  --embeddings-binary   write preview binary embeddings to -o (unstable format)\n");
@@ -1197,6 +1200,11 @@ bool dino_params_parse(int argc, char **argv, dino_params &params) {
         print_usage(stderr, argc, argv, params);
         exit(1);
     }
+    if (params.classify && !params.image_out.empty()) {
+        fprintf(stderr, "error: -o/--out writes feature-mode output (PCA or binary) and cannot be combined with -c\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
     if (params.classify && (preprocess_set || params.no_resize)) {
         fprintf(stderr, "error: --preprocess/--no-resize are feature-mode flags and cannot be combined with -c\n");
         print_usage(stderr, argc, argv, params);
@@ -1226,29 +1234,45 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
                     ny);
             return {};
         }
+        // the planar deinterleave below indexes data[i * 3 + c]
+        if (img.c != 3 || img.data.size() != (size_t)img.nx * img.ny * 3) {
+            fprintf(stderr, "%s: expected a 3-channel float image of %dx%d (%zu values), got c=%d, %zu values\n",
+                    __func__, img.nx, img.ny, (size_t)img.nx * img.ny * 3, img.c, img.data.size());
+            return {};
+        }
     }
 
     // the graph batch dimension is the number of images actually provided
-    dino_params batch_params = params;
-    batch_params.n_batch     = (uint32_t)imgs.size();
-    const size_t n_batch     = imgs.size();
-    const size_t hidden_size = model.hparams.hidden_size;
-    const size_t npix        = (size_t)nx * ny;
-    const int    num_patches = (ny / (int)model.hparams.patch_size) * (nx / (int)model.hparams.patch_size);
+    dino_params batch_params  = params;
+    batch_params.n_batch      = (uint32_t)imgs.size();
+    const size_t  n_batch     = imgs.size();
+    const size_t  hidden_size = model.hparams.hidden_size;
+    const size_t  npix        = (size_t)nx * ny;
+    const int64_t num_patches = (int64_t)(ny / (int)model.hparams.patch_size) * (nx / (int)model.hparams.patch_size);
+
+    // graph size derived from the layer count: each encoder layer emits
+    // ~35-45 nodes (a bit more on the flash path), plus ~50 fixed nodes for
+    // patch embedding, the token glue, and the output heads. 64 per layer
+    // leaves comfortable headroom without the fixed 8192-node pool.
+    const size_t graph_size = (size_t)model.hparams.num_hidden_layers * 64 + 128;
 
     struct ggml_init_params params0 = {
-        /*.mem_size   =*/ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE + ggml_graph_overhead(),
+        /*.mem_size   =*/ggml_tensor_overhead() * graph_size + ggml_graph_overhead(),
         /*.mem_buffer =*/nullptr,
         /*.no_alloc   =*/true, // the tensors will be allocated later by ggml_gallocr_alloc_graph()
     };
     struct ggml_context *ctx_cgraph = ggml_init(params0);
-    struct ggml_cgraph  *gf         = build_graph({nx, ny}, ctx_cgraph, model, batch_params);
+    if (!ctx_cgraph) {
+        fprintf(stderr, "%s: ggml_init() failed\n", __func__);
+        return {};
+    }
+    struct ggml_cgraph *gf = build_graph({nx, ny}, ctx_cgraph, model, batch_params);
 
     if (!ggml_gallocr_alloc_graph(allocr, gf)) {
         fprintf(stderr,
-                "%s: failed to allocate compute graph for a %d x %d input (%d patch tokens); "
+                "%s: failed to allocate compute graph for a %d x %d input (%lld patch tokens); "
                 "reduce input size or use --preprocess crop518 / --max-tokens\n",
-                __func__, nx, ny, num_patches);
+                __func__, nx, ny, (long long)num_patches);
         ggml_free(ctx_cgraph);
         return {};
     }
@@ -1354,7 +1378,7 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
             std::vector<float> pooled(2 * hidden_size, 0.0f);
             std::copy(output.cls_token->begin(), output.cls_token->end(), pooled.begin());
             float *mean = pooled.data() + hidden_size;
-            for (int p = 0; p < num_patches; ++p) {
+            for (int64_t p = 0; p < num_patches; ++p) {
                 const float *row = img_patches + (size_t)p * hidden_size;
                 for (size_t d = 0; d < hidden_size; ++d) {
                     mean[d] += row[d];
