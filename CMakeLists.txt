@@ -99,6 +99,17 @@ if (DINOV2_BUILD_TESTS)
     dinov2_target_flags(test_dinov2)
     add_test(NAME test_dinov2 COMMAND test_dinov2)
 
+    if (DINOV2_BUILD_C_API)
+        # C API end-to-end tests on synthetic GGUF fixtures
+        add_executable(test_dinov2_c tests/test_dinov2_c.cpp)
+        target_link_libraries(test_dinov2_c PRIVATE dinov2)
+        target_include_directories(test_dinov2_c PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            tests)
+        dinov2_target_flags(test_dinov2_c)
+        add_test(NAME test_dinov2_c COMMAND test_dinov2_c)
+    endif ()
+
     if (DINOV2_BUILD_CLI)
         add_executable(test_cli tests/test_cli.cpp)
         target_link_libraries(test_cli PRIVATE ggml)
