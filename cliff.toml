@@ -64,7 +64,9 @@ footer = """
      must be added by hand when a new tag ships, since git-cliff does
      not derive a comparison base URL automatically. -->
 
-[Unreleased]: https://github.com/espetro/dinov2.cpp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/espetro/dinov2.cpp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/espetro/dinov2.cpp/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/espetro/dinov2.cpp/compare/v0.3.0...v0.4.0
 """
 trim = true
 render_always = true
