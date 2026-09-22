@@ -10,25 +10,25 @@
 #include <stdint.h>
 
 #ifdef DINOV2_SHARED
-#    ifdef _WIN32
-#        ifdef DINOV2_BUILD
-#            define DINO_API __declspec(dllexport)
-#        else
-#            define DINO_API __declspec(dllimport)
-#        endif
-#    else
-#        define DINO_API __attribute__((visibility("default")))
-#    endif
+#ifdef _WIN32
+#ifdef DINOV2_BUILD
+#define DINO_API __declspec(dllexport)
 #else
-#    define DINO_API
+#define DINO_API __declspec(dllimport)
+#endif
+#else
+#define DINO_API __attribute__((visibility("default")))
+#endif
+#else
+#define DINO_API
 #endif
 
 #ifdef __GNUC__
-#    define DINO_DEPRECATED(func, hint) func __attribute__((deprecated(hint)))
+#define DINO_DEPRECATED(func, hint) func __attribute__((deprecated(hint)))
 #elif defined(_MSC_VER)
-#    define DINO_DEPRECATED(func, hint) __declspec(deprecated(hint)) func
+#define DINO_DEPRECATED(func, hint) __declspec(deprecated(hint)) func
 #else
-#    define DINO_DEPRECATED(func, hint) func
+#define DINO_DEPRECATED(func, hint) func
 #endif
 
 #ifdef __cplusplus
@@ -67,8 +67,8 @@ typedef struct dino_model_params {
 } dino_model_params;
 
 typedef struct dino_ctx_params {
-    int32_t         n_threads;  // applied via ggml_backend_set_n_threads proc address
-    int32_t         n_batch;    // max images packed into one forward pass (1..DINO_MAX_BATCH)
+    int32_t         n_threads; // applied via ggml_backend_set_n_threads proc address
+    int32_t         n_batch;   // max images packed into one forward pass (1..DINO_MAX_BATCH)
     bool            flash_attn;
     dino_preprocess preprocess; // feature-mode recipe; classify ignores it
     bool            no_resize;  // bounded mode only: keep native resolution
@@ -76,9 +76,9 @@ typedef struct dino_ctx_params {
 } dino_ctx_params;
 
 typedef struct dino_run_params {
-    bool    classify;      // run the classifier head and fill topk outputs
-    int32_t topk;          // number of top classes stored per image when classify is set
-    bool    l2_normalize;  // L2-normalize cls/pooled/patch vectors before storing
+    bool    classify;     // run the classifier head and fill topk outputs
+    int32_t topk;         // number of top classes stored per image when classify is set
+    bool    l2_normalize; // L2-normalize cls/pooled/patch vectors before storing
 } dino_run_params;
 
 // one image of a batch: interleaved RGB8, row-major
@@ -100,19 +100,19 @@ DINO_API struct dino_ctx_params   dino_ctx_default_params(void);
 DINO_API struct dino_run_params   dino_run_default_params(void);
 
 // Load a GGUF model. Returns NULL on failure (details on stderr).
-DINO_API dino_model *dino_model_load_from_file    (const char *path, struct dino_model_params params);
-DINO_API dino_model *dino_model_load_from_buffer  (const void *data, size_t size, struct dino_model_params params);
+DINO_API dino_model *dino_model_load_from_file(const char *path, struct dino_model_params params);
+DINO_API dino_model *dino_model_load_from_buffer(const void *data, size_t size, struct dino_model_params params);
 DINO_API dino_model *dino_model_load_from_callback(dino_reader_callback_t read, void *userdata,
                                                    struct dino_model_params params);
 DINO_API void        dino_model_free(dino_model *model);
 
 // Model metadata; 0/NULL when absent. label() returns NULL for classes without a label.
-DINO_API uint32_t     dino_model_hidden_size      (const dino_model *model);
-DINO_API uint32_t     dino_model_patch_size       (const dino_model *model);
-DINO_API uint32_t     dino_model_n_register_tokens(const dino_model *model);
-DINO_API bool         dino_model_has_classifier   (const dino_model *model);
-DINO_API uint32_t     dino_model_n_classes        (const dino_model *model);
-DINO_API const char * dino_model_label            (const dino_model *model, uint32_t class_index);
+DINO_API uint32_t    dino_model_hidden_size(const dino_model *model);
+DINO_API uint32_t    dino_model_patch_size(const dino_model *model);
+DINO_API uint32_t    dino_model_n_register_tokens(const dino_model *model);
+DINO_API bool        dino_model_has_classifier(const dino_model *model);
+DINO_API uint32_t    dino_model_n_classes(const dino_model *model);
+DINO_API const char *dino_model_label(const dino_model *model, uint32_t class_index);
 
 // Create an inference context on a model. The model is borrowed and must
 // outlive the context. Returns NULL on invalid params.
@@ -130,18 +130,17 @@ DINO_API enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *im
 
 // Output accessors. Returned pointers are borrowed, point into storage owned by
 // ctx, and are invalidated by the next dino_encode or by dino_free.
-DINO_API int32_t       dino_output_n_images(const dino_ctx *ctx);
+DINO_API int32_t dino_output_n_images(const dino_ctx *ctx);
 // cls embedding: hidden_size floats per image
-DINO_API const float * dino_output_cls   (const dino_ctx *ctx, int32_t index);
+DINO_API const float *dino_output_cls(const dino_ctx *ctx, int32_t index);
 // pooled embedding [cls || mean(patches)]: 2 * hidden_size floats; NULL in classify mode
-DINO_API const float * dino_output_pooled(const dino_ctx *ctx, int32_t index);
+DINO_API const float *dino_output_pooled(const dino_ctx *ctx, int32_t index);
 // patch tokens: grid_w * grid_h * hidden_size floats, row-major; NULL in classify mode.
 // All out params may be NULL.
-DINO_API const float * dino_output_patches(const dino_ctx *ctx, int32_t index, int32_t *n_patches, int32_t *grid_w,
-                                           int32_t *grid_h);
+DINO_API const float *dino_output_patches(const dino_ctx *ctx, int32_t index, int32_t *n_patches, int32_t *grid_w,
+                                          int32_t *grid_h);
 // classify mode: writes the top-k index/probability arrays, returns k. 0/NULL otherwise.
-DINO_API int32_t       dino_output_topk(const dino_ctx *ctx, int32_t index, const uint32_t **indices,
-                                        const float **probs);
+DINO_API int32_t dino_output_topk(const dino_ctx *ctx, int32_t index, const uint32_t **indices, const float **probs);
 
 #ifdef __cplusplus
 }

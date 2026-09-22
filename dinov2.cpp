@@ -1012,7 +1012,7 @@ bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_option
     // the scheduler requires a CPU backend in the last slot as the fallback
     // for ops the primary backend cannot run
     ggml_backend_t backends[2] = {model.backend, nullptr};
-    int            n_backends = 1;
+    int            n_backends  = 1;
     if (ggml_backend_dev_type(ggml_backend_get_device(model.backend)) != GGML_BACKEND_DEVICE_TYPE_CPU) {
         ctx.cpu_fallback = dino_backend_init("CPU");
         if (!ctx.cpu_fallback) {
@@ -1058,10 +1058,10 @@ void dino_ctx_free(dino_ctx &ctx) {
     ctx.last_status = dino_errc::ok;
 }
 
-const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx,
-                                             const std::vector<ImageF> &imgs, const dino_run_options &run) {
+const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx, const std::vector<ImageF> &imgs,
+                                             const dino_run_options &run) {
     ctx.last_outputs.clear();
-    ctx.last_status = dino_errc::ok;
+    ctx.last_status                 = dino_errc::ok;
     const dino_ctx_options &options = ctx.options;
     if (imgs.empty()) {
         fprintf(stderr, "%s: no input images\n", __func__);
@@ -1094,11 +1094,11 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
     }
 
     // the graph batch dimension is the number of images actually provided
-    dino_ctx_options batch_options  = options;
-    batch_options.n_batch           = (uint32_t)imgs.size();
-    const size_t  n_batch     = imgs.size();
-    const size_t  hidden_size = model.hparams.hidden_size;
-    const size_t  npix        = (size_t)nx * ny;
+    dino_ctx_options batch_options = options;
+    batch_options.n_batch          = (uint32_t)imgs.size();
+    const size_t  n_batch          = imgs.size();
+    const size_t  hidden_size      = model.hparams.hidden_size;
+    const size_t  npix             = (size_t)nx * ny;
     const int64_t num_patches = (int64_t)(ny / (int)model.hparams.patch_size) * (nx / (int)model.hparams.patch_size);
 
     // graph size derived from the layer count: each encoder layer emits

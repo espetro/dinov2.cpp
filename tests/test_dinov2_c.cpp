@@ -30,8 +30,7 @@ static const std::filesystem::path &test_directory() {
         const auto            now  = std::chrono::steady_clock::now().time_since_epoch().count();
         std::filesystem::path base = std::filesystem::temp_directory_path();
         for (unsigned int attempt = 0; attempt < 100; ++attempt) {
-            const auto candidate =
-                base / ("dinov2-c-test-" + std::to_string(now) + "-" + std::to_string(attempt));
+            const auto      candidate = base / ("dinov2-c-test-" + std::to_string(now) + "-" + std::to_string(attempt));
             std::error_code ec;
             if (std::filesystem::create_directory(candidate, ec)) {
                 return candidate;
@@ -92,11 +91,10 @@ static bool write_tiny_gguf(const std::string &path, bool with_classifier = true
         }
     }
 
-    const int    n_tensors = 5 + 14 * (int)layers + 4;
-    ggml_context *tctx =
-        ggml_init({/*mem_size*/ ggml_tensor_overhead() * n_tensors +
-                       sizeof(float) * (hsz * (grid * grid + 1) + patch * patch * 3 * hsz + 64 * 1024),
-                   /*mem_buffer*/ nullptr, /*no_alloc*/ false});
+    const int     n_tensors = 5 + 14 * (int)layers + 4;
+    ggml_context *tctx      = ggml_init({/*mem_size*/ ggml_tensor_overhead() * n_tensors +
+                                        sizeof(float) * (hsz * (grid * grid + 1) + patch * patch * 3 * hsz + 64 * 1024),
+                                    /*mem_buffer*/ nullptr, /*no_alloc*/ false});
     if (!tctx) {
         gguf_free(gguf);
         return false;
@@ -106,9 +104,9 @@ static bool write_tiny_gguf(const std::string &path, bool with_classifier = true
     auto     add  = [&](const char *name, int64_t n0, int64_t n1, int64_t n2, int64_t n3) {
         ggml_tensor *t = ggml_new_tensor_4d(tctx, GGML_TYPE_F32, n0, n1, n2, n3);
         ggml_set_name(t, name);
-        const std::string n  = name;
-        const bool is_scale  = n.find("norm") != std::string::npos && n.find("weight") != std::string::npos;
-        const bool is_lambda = n.find("lambda") != std::string::npos;
+        const std::string n         = name;
+        const bool        is_scale  = n.find("norm") != std::string::npos && n.find("weight") != std::string::npos;
+        const bool        is_lambda = n.find("lambda") != std::string::npos;
         if (is_scale) {
             fill_tensor(t, ++seed, 0.8f, 0.4f);
         } else if (is_lambda) {
@@ -250,8 +248,8 @@ TEST_CASE("c api: batch encode matches the C++ path") {
     dino_ctx *ctx      = dino_init_from_model(model, cp);
     REQUIRE(ctx != nullptr);
 
-    const std::vector<uint8_t> px0 = make_rgb8(8, 8, 1);
-    const std::vector<uint8_t> px1 = make_rgb8(8, 8, 2);
+    const std::vector<uint8_t> px0     = make_rgb8(8, 8, 1);
+    const std::vector<uint8_t> px1     = make_rgb8(8, 8, 2);
     const dino_image           imgs[2] = {as_dino_image(px0, 8, 8), as_dino_image(px1, 8, 8)};
     REQUIRE(dino_encode(ctx, imgs, 2, dino_run_default_params()) == DINO_STATUS_SUCCESS);
     CHECK(dino_output_n_images(ctx) == 2);
@@ -303,7 +301,7 @@ TEST_CASE("c api: buffer and callback loads match the file load") {
 
     dino_model *m_buf = dino_model_load_from_buffer(buf.data(), buf.size(), dino_model_default_params());
     REQUIRE(m_buf != nullptr);
-    buf_reader r{buf.data(), buf.size()};
+    buf_reader  r{buf.data(), buf.size()};
     dino_model *m_cb = dino_model_load_from_callback(buf_read, &r, dino_model_default_params());
     REQUIRE(m_cb != nullptr);
     CHECK(dino_model_hidden_size(m_buf) == dino_model_hidden_size(m_cb));
@@ -328,9 +326,9 @@ TEST_CASE("c api: buffer and callback loads match the file load") {
 }
 
 TEST_CASE("c api: classify mode returns topk") {
-    dino_model_params mp      = dino_model_default_params();
-    mp.require_classifier     = true; // exercises the strict label preflight
-    dino_model *model         = dino_model_load_from_file(tiny_path.c_str(), mp);
+    dino_model_params mp  = dino_model_default_params();
+    mp.require_classifier = true; // exercises the strict label preflight
+    dino_model *model     = dino_model_load_from_file(tiny_path.c_str(), mp);
     REQUIRE(model != nullptr);
 
     dino_ctx_params cp = dino_ctx_default_params();
@@ -338,8 +336,8 @@ TEST_CASE("c api: classify mode returns topk") {
     dino_ctx *ctx      = dino_init_from_model(model, cp);
     REQUIRE(ctx != nullptr);
 
-    const std::vector<uint8_t> px0 = make_rgb8(8, 8, 4);
-    const std::vector<uint8_t> px1 = make_rgb8(8, 8, 5);
+    const std::vector<uint8_t> px0     = make_rgb8(8, 8, 4);
+    const std::vector<uint8_t> px1     = make_rgb8(8, 8, 5);
     const dino_image           imgs[2] = {as_dino_image(px0, 8, 8), as_dino_image(px1, 8, 8)};
     dino_run_params            rp      = dino_run_default_params();
     rp.classify                        = true;
@@ -378,7 +376,7 @@ TEST_CASE("c api: classify mode returns topk") {
         img.data.assign(px.begin(), px.end());
         return img;
     };
-    const dino_run_options           run{/*.classify*/ true, /*.topk*/ 3, /*.l2_normalize*/ false};
+    const dino_run_options          run{/*.classify*/ true, /*.topk*/ 3, /*.l2_normalize*/ false};
     const std::vector<dino_output> &cpp_outs =
         dino_predict(cpp_model, cpp_ctx,
                      {dino_classify_preprocess(to_image(px0), cpp_model.hparams),
@@ -419,7 +417,7 @@ TEST_CASE("c api: strided rows and mixed sizes") {
     CHECK(std::memcmp(dino_output_cls(ctx, 0), cls_strided.data(), cls_strided.size() * sizeof(float)) == 0);
 
     // mixed sizes in one call group into separate single-size chunks
-    const std::vector<uint8_t> big = make_rgb8(16, 16, 7);
+    const std::vector<uint8_t> big      = make_rgb8(16, 16, 7);
     const dino_image           mixed[2] = {as_dino_image(packed, 8, 8), as_dino_image(big, 16, 16)};
     REQUIRE(dino_encode(ctx, mixed, 2, dino_run_default_params()) == DINO_STATUS_SUCCESS);
     CHECK(dino_output_n_images(ctx) == 2);
@@ -454,17 +452,17 @@ TEST_CASE("c api: error paths return status codes") {
     dino_image bad = img;
     bad.pixels     = nullptr;
     CHECK(dino_encode(ctx, &bad, 1, run) == DINO_STATUS_INVALID_ARGUMENT);
-    bad = img;
+    bad       = img;
     bad.width = 0;
     CHECK(dino_encode(ctx, &bad, 1, run) == DINO_STATUS_INVALID_ARGUMENT);
-    bad = img;
+    bad        = img;
     bad.stride = img.width * 3 - 1; // stride shorter than one row
     CHECK(dino_encode(ctx, &bad, 1, run) == DINO_STATUS_INVALID_ARGUMENT);
 
     dino_run_params bad_run = run;
     bad_run.topk            = 0;
     CHECK(dino_encode(ctx, &img, 1, bad_run) == DINO_STATUS_INVALID_ARGUMENT);
-    bad_run         = run;
+    bad_run          = run;
     bad_run.classify = true;
     bad_run.topk     = 8; // more than the fixture's 7 classes
     CHECK(dino_encode(ctx, &img, 1, bad_run) == DINO_STATUS_INVALID_ARGUMENT);
@@ -483,15 +481,15 @@ TEST_CASE("c api: error paths return status codes") {
     CHECK(dino_encode(bctx, &img, 1, classify_run) == DINO_STATUS_NO_CLASSIFIER);
 
     // require_classifier fails the load of a backbone-only GGUF
-    dino_model_params strict      = dino_model_default_params();
-    strict.require_classifier     = true;
+    dino_model_params strict  = dino_model_default_params();
+    strict.require_classifier = true;
     CHECK(dino_model_load_from_file(backbone_path.c_str(), strict) == nullptr);
 
     // invalid ctx params are rejected
     dino_ctx_params bad_cp = dino_ctx_default_params();
     bad_cp.n_batch         = 0;
     CHECK(dino_init_from_model(model, bad_cp) == nullptr);
-    bad_cp          = dino_ctx_default_params();
+    bad_cp           = dino_ctx_default_params();
     bad_cp.n_threads = 0;
     CHECK(dino_init_from_model(model, bad_cp) == nullptr);
     bad_cp            = dino_ctx_default_params();

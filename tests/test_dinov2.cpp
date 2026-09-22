@@ -737,7 +737,7 @@ TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess_
 TEST_CASE("dino_classify_preprocess: shared helper keeps 224x224 output") {
     // classify and hf feature mode run the same (256, 224) recipe, so their
     // outputs must be identical byte for byte.
-    dino_hparams   h;
+    dino_hparams     h;
     dino_ctx_options params;
     params.preprocess_mode = dino_preprocess_mode::hf;
 
@@ -979,9 +979,9 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
         dino_run_options ropts;
 
         m.ctx.options.enable_flash_attn = false;
-        const auto ref = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
+        const auto ref                  = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
         m.ctx.options.enable_flash_attn = true;
-        const auto fa = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
+        const auto fa                   = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
@@ -996,9 +996,9 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
         dino_run_options ropts;
 
         m.ctx.options.enable_flash_attn = false;
-        const auto ref = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
+        const auto ref                  = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
         m.ctx.options.enable_flash_attn = true;
-        const auto fa = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
+        const auto fa                   = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
@@ -1015,9 +1015,9 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
         ropts.topk     = 3;
 
         m.ctx.options.enable_flash_attn = false;
-        const auto ref = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
+        const auto ref                  = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
         m.ctx.options.enable_flash_attn = true;
-        const auto fa = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
+        const auto fa                   = dino_predict(m.model, m.ctx, std::vector<ImageF>{img}, ropts);
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 

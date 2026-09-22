@@ -36,11 +36,11 @@ bool to_ctx_options(const dino_ctx_params &params, dino_ctx_options &options) {
     if (params.n_threads < 1 || !dino_batch_size_valid(params.n_batch) || params.max_tokens < -1) {
         return false;
     }
-    options.n_threads        = (uint32_t)params.n_threads;
-    options.n_batch          = (uint32_t)params.n_batch;
+    options.n_threads         = (uint32_t)params.n_threads;
+    options.n_batch           = (uint32_t)params.n_batch;
     options.enable_flash_attn = params.flash_attn;
-    options.no_resize        = params.no_resize;
-    options.max_tokens       = params.max_tokens;
+    options.no_resize         = params.no_resize;
+    options.max_tokens        = params.max_tokens;
     switch (params.preprocess) {
     case DINO_PREPROCESS_BOUNDED:
         options.preprocess_mode = dino_preprocess_mode::bounded;
@@ -280,9 +280,9 @@ enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *images, int
 
     // preprocess; the max_tokens cap applies to feature mode only, checked on
     // the prospective output size before the (expensive) resize
-    const int64_t token_limit = ctx->options.max_tokens >= 0
-                                    ? ctx->options.max_tokens
-                                    : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
+    const int64_t       token_limit = ctx->options.max_tokens >= 0
+                                          ? ctx->options.max_tokens
+                                          : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
     std::vector<ImageF> imgs_f((size_t)n_images);
     for (int32_t i = 0; i < n_images; ++i) {
         if (token_limit > 0 && !params.classify) {
@@ -290,9 +290,8 @@ enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *images, int
             const int64_t n_patches = (int64_t)(out_size.height / (int)model.hparams.patch_size) *
                                       (out_size.width / (int)model.hparams.patch_size);
             if (n_patches > token_limit) {
-                fprintf(stderr,
-                        "error: image %d yields %lld patch tokens after preprocessing (limit %lld)\n",
-                        (int)i, (long long)n_patches, (long long)token_limit);
+                fprintf(stderr, "error: image %d yields %lld patch tokens after preprocessing (limit %lld)\n", (int)i,
+                        (long long)n_patches, (long long)token_limit);
                 return DINO_STATUS_TOO_MANY_TOKENS;
             }
         }
@@ -302,7 +301,7 @@ enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *images, int
 
     // one graph requires equal dims: group consecutive same-sized images into
     // chunks of at most ctx n_batch
-    const dino_run_options run{params.classify, (uint32_t)params.topk, params.l2_normalize};
+    const dino_run_options   run{params.classify, (uint32_t)params.topk, params.l2_normalize};
     std::vector<dino_output> all;
     all.reserve((size_t)n_images);
     for (size_t s = 0; s < imgs_f.size();) {

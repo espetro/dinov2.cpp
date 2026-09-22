@@ -61,7 +61,7 @@ struct dino_model {
     ggml_backend_buffer_t                       buffer  = nullptr;
     std::map<std::string, struct ggml_tensor *> tensors;
     // set at load: classifier.weight + classifier.bias present and num_classes > 0
-    bool                                        has_classifier = false;
+    bool has_classifier = false;
 };
 
 // Maximum accepted value for dino_ctx_options::n_batch / the --batch flag and
@@ -195,16 +195,16 @@ enum class dino_errc {
 // recent predict call. Create one per model after dino_model_load. Not
 // thread-safe; concurrent runs need one context each.
 struct dino_ctx {
-    const dino_model         *model = nullptr; // borrowed; must outlive the ctx
-    dino_ctx_options          options;
-    ggml_backend_sched_t      sched        = nullptr;
+    const dino_model    *model = nullptr; // borrowed; must outlive the ctx
+    dino_ctx_options     options;
+    ggml_backend_sched_t sched = nullptr;
     // owned fallback for ops the model's backend cannot run; only set when
     // model.backend is not CPU (ggml_backend_sched requires a CPU tail)
-    ggml_backend_t            cpu_fallback = nullptr;
-    std::vector<dino_output>  last_outputs; // owned by the ctx; overwritten on each predict
+    ggml_backend_t           cpu_fallback = nullptr;
+    std::vector<dino_output> last_outputs; // owned by the ctx; overwritten on each predict
     // failure category of the last predict; meaningful only when
     // last_outputs is empty after a call
-    dino_errc                 last_status = dino_errc::ok;
+    dino_errc last_status = dino_errc::ok;
 };
 
 bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_options &options);
@@ -217,10 +217,9 @@ void dino_ctx_free(dino_ctx &ctx);
 // into a single graph whose batch dimension is imgs.size()). The returned
 // reference is invalidated by the next dino_predict call on ctx; an empty
 // vector signals failure.
-const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx,
-                                             const std::vector<ImageF> &imgs, const dino_run_options &run);
+const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx, const std::vector<ImageF> &imgs,
+                                             const dino_run_options &run);
 
 // Single-image convenience wrapper around the batch form. Returns nullptr on
 // failure, otherwise a pointer into ctx.last_outputs.
-const dino_output *dino_predict(const dino_model &model, dino_ctx &ctx, const ImageF &img,
-                                const dino_run_options &run);
+const dino_output *dino_predict(const dino_model &model, dino_ctx &ctx, const ImageF &img, const dino_run_options &run);

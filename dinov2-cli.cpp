@@ -40,18 +40,18 @@
 // CLI-only parameters: everything that is not part of the engine's
 // model/ctx/run options (I/O paths, output modes, bench controls).
 struct dino_cli_params {
-    dino_model_options         model_opts;
-    dino_ctx_options           ctx_opts;
-    dino_run_options           run_opts;
-    int32_t                    seed               = 42; // unused: no RNG in inference; kept for CLI compatibility
-    bool                       print_embeddings   = false; // emit embeddings JSON on stdout (JSONL)
-    bool                       embeddings_binary  = false; // write preview binary embeddings to -o
-    bool                       print_patch_tokens = false; // include per-patch embeddings in the output
-    std::string                model              = "../model.gguf";
+    dino_model_options model_opts;
+    dino_ctx_options   ctx_opts;
+    dino_run_options   run_opts;
+    int32_t            seed               = 42;    // unused: no RNG in inference; kept for CLI compatibility
+    bool               print_embeddings   = false; // emit embeddings JSON on stdout (JSONL)
+    bool               embeddings_binary  = false; // write preview binary embeddings to -o
+    bool               print_patch_tokens = false; // include per-patch embeddings in the output
+    std::string        model              = "../model.gguf";
     // input image paths; -i repeats or comma-separates to add more than one.
     // Images are forwarded to the encoder in chunks of ctx_opts.n_batch.
-    std::vector<std::string>   fnames_inp = {"../assets/tench.jpg"};
-    std::string                image_out  = ""; // output of pca visualization (if used; a directory for multi-input)
+    std::vector<std::string> fnames_inp = {"../assets/tench.jpg"};
+    std::string              image_out  = ""; // output of pca visualization (if used; a directory for multi-input)
     // Benchmark controls. bench_repeats=0 disables the bench loop (legacy single-shot path).
     // --bench with no count sets bench_repeats to 5 (the default for one-shot "is it faster").
     uint32_t bench_repeats = 0;
@@ -499,8 +499,8 @@ static std::string binary_out_path(const std::string &out_path, const std::strin
 // cls (both modes), pooled (feature mode), topk (classify mode),
 // patches (feature mode + --print-patch-tokens). With multiple inputs the
 // caller prints one such line per image (JSONL).
-static void print_embeddings_json(const dino_cli_params &params, const dino_model &model, const ImageF &img_f, size_t index,
-                                  const std::string &image_path, const dino_output &output) {
+static void print_embeddings_json(const dino_cli_params &params, const dino_model &model, const ImageF &img_f,
+                                  size_t index, const std::string &image_path, const dino_output &output) {
     const int grid_w    = img_f.nx / model.hparams.patch_size;
     const int grid_h    = img_f.ny / model.hparams.patch_size;
     const int n_patches = grid_h * grid_w;
@@ -545,7 +545,7 @@ static void print_embeddings_json(const dino_cli_params &params, const dino_mode
 int main(int argc, char **argv) {
     ggml_time_init();
     dino_cli_params params;
-    dino_model  model;
+    dino_model      model;
 
     if (dino_params_parse(argc, argv, params) == false) {
         return 1;
@@ -564,8 +564,8 @@ int main(int argc, char **argv) {
     }
 
     // nothing-to-do guard: no output mode selected
-    if (!params.run_opts.classify && !params.print_embeddings && !params.embeddings_binary && params.image_out.empty() &&
-        params.bench_repeats == 0) {
+    if (!params.run_opts.classify && !params.print_embeddings && !params.embeddings_binary &&
+        params.image_out.empty() && params.bench_repeats == 0) {
         fprintf(stderr,
                 "%s: nothing to do: no output mode selected; choose one of:\n"
                 "  -c, --classify       print top-k classification labels\n"
@@ -617,8 +617,9 @@ int main(int argc, char **argv) {
     // preprocess every input; classify mode always yields 224x224 crops
     std::vector<ImageF> imgs_f;
     imgs_f.reserve(imgs.size());
-    const int64_t token_limit =
-        params.ctx_opts.max_tokens >= 0 ? params.ctx_opts.max_tokens : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
+    const int64_t token_limit = params.ctx_opts.max_tokens >= 0
+                                    ? params.ctx_opts.max_tokens
+                                    : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
     for (size_t i = 0; i < imgs.size(); ++i) {
         const Image &img = imgs[i];
         // hard cap on patch tokens, applied on the prospective preprocessed
@@ -638,7 +639,7 @@ int main(int argc, char **argv) {
             }
         }
         ImageF img_f = params.run_opts.classify ? dino_classify_preprocess(img, model.hparams)
-                                       : dino_feature_preprocess(img, model.hparams, params.ctx_opts);
+                                                : dino_feature_preprocess(img, model.hparams, params.ctx_opts);
         fprintf(stderr, "%s: preprocessed image '%s' (%d x %d)\n", __func__, params.fnames_inp[i].c_str(), img_f.nx,
                 img_f.ny);
         imgs_f.push_back(std::move(img_f));
@@ -665,7 +666,8 @@ int main(int argc, char **argv) {
 
     // With multiple inputs, -o names a directory for per-image PCA or binary files;
     // create it up front so a bad path fails before any compute.
-    if (params.fnames_inp.size() > 1 && !params.image_out.empty() && !params.run_opts.classify && params.bench_repeats == 0) {
+    if (params.fnames_inp.size() > 1 && !params.image_out.empty() && !params.run_opts.classify &&
+        params.bench_repeats == 0) {
         std::error_code ec;
         std::filesystem::create_directories(params.image_out, ec);
         const bool output_is_directory = std::filesystem::is_directory(params.image_out, ec);
@@ -690,10 +692,10 @@ int main(int argc, char **argv) {
             // Single-shot path: run the inputs through dino_predict in chunks
             // of n_batch and emit per-image outputs in input order.
             for (size_t s = 0; s < imgs_f.size(); s += params.ctx_opts.n_batch) {
-                const size_t              e       = std::min(s + (size_t)params.ctx_opts.n_batch, imgs_f.size());
-                const std::vector<ImageF> chunk   = {imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e};
-                const int64_t                    t0      = ggml_time_ms();
-                const std::vector<dino_output>  &outputs = dino_predict(model, ctx, chunk, params.run_opts);
+                const size_t                    e     = std::min(s + (size_t)params.ctx_opts.n_batch, imgs_f.size());
+                const std::vector<ImageF>       chunk = {imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e};
+                const int64_t                   t0    = ggml_time_ms();
+                const std::vector<dino_output> &outputs = dino_predict(model, ctx, chunk, params.run_opts);
                 ggml_backend_sched_synchronize(ctx.sched);
                 const int64_t dt_ms = ggml_time_ms() - t0;
                 fprintf(stderr, "%s: graph computation took %lld ms\n", __func__, dt_ms);
@@ -859,15 +861,17 @@ int main(int argc, char **argv) {
                         "],\"mean_ms\":%.1f,\"stddev_ms\":%.1f,\"min_ms\":%.0f,\"max_ms\":%.0f,"
                         "\"peak_rss_mb\":%.0f,\"n_images\":%zu,\"batch\":%u,\"ms_per_image\":%.1f,"
                         "\"images_per_sec\":%.1f}\n",
-                        mean, stddev, mn, mx, peak_rss_mb, imgs_f.size(), params.ctx_opts.n_batch, ms_per_image, images_per_sec);
+                        mean, stddev, mn, mx, peak_rss_mb, imgs_f.size(), params.ctx_opts.n_batch, ms_per_image,
+                        images_per_sec);
                 fflush(stdout);
             } else {
                 fprintf(stderr,
                         "%s: bench(model=%s, n_repeats=%u, n_warmup=%u, n_threads=%u, n_images=%zu, batch=%u) "
                         "mean=%.1f ms stddev=%.1f ms min=%.0f ms max=%.0f ms peak_rss_mb=%.0f "
                         "ms_per_image=%.1f images_per_sec=%.1f\n",
-                        __func__, model_label.c_str(), params.bench_repeats, params.bench_warmup, params.ctx_opts.n_threads,
-                        imgs_f.size(), params.ctx_opts.n_batch, mean, stddev, mn, mx, peak_rss_mb, ms_per_image, images_per_sec);
+                        __func__, model_label.c_str(), params.bench_repeats, params.bench_warmup,
+                        params.ctx_opts.n_threads, imgs_f.size(), params.ctx_opts.n_batch, mean, stddev, mn, mx,
+                        peak_rss_mb, ms_per_image, images_per_sec);
             }
 
             free_model();
