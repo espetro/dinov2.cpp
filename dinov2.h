@@ -52,9 +52,9 @@ struct dino_hparams {
 
 struct dino_model {
     dino_hparams                                hparams;
-    struct ggml_context                        *ctx;
+    struct ggml_context                        *ctx     = nullptr;
     ggml_backend_t                              backend = nullptr;
-    ggml_backend_buffer_t                       buffer;
+    ggml_backend_buffer_t                       buffer  = nullptr;
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 

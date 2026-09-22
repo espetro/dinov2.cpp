@@ -151,6 +151,66 @@ static bool write_minimal_gguf(const std::string &path, bool add_register_tensor
     return written;
 }
 
+// Write a GGUF that passes the loader's required-metadata and required-tensor
+// validation: hidden=4, layers=0, heads=1, patch=14, img_size=224 (pos table
+// is [4, 16*16 + 1] F32). `omit` drops one required key or tensor by name;
+// pass an unrecognized name to write a fully valid file. patch_size_override
+// rewrites the patch_size metadata value (e.g. 0 for a malformed case) and
+// pos_rows_override rewrites the position_embeddings row count.
+static bool write_complete_gguf(const std::string &path, const std::string &omit = "", int64_t patch_size_override = -1,
+                                bool add_classifier = true, int64_t pos_rows_override = -1) {
+    gguf_context *gguf = gguf_init_empty();
+    if (omit != "hidden_size") {
+        gguf_set_val_u32(gguf, "hidden_size", 4);
+    }
+    gguf_set_val_u32(gguf, "num_hidden_layers", 0);
+    gguf_set_val_u32(gguf, "num_attention_heads", 1);
+    gguf_set_val_u32(gguf, "patch_size", static_cast<uint32_t>(patch_size_override >= 0 ? patch_size_override : 14));
+    gguf_set_val_u32(gguf, "img_size", 224);
+    gguf_set_val_u32(gguf, "ftype", 1);
+
+    const int64_t hidden = 4;
+    const int64_t grid   = 224 / 14; // pos rows = grid*grid + 1
+
+    ggml_init_params init_params = {ggml_tensor_overhead() * 16 + sizeof(float) * (hidden * (grid * grid + 1) + 16384),
+                                    nullptr, false};
+    ggml_context    *tensor_ctx  = ggml_init(init_params);
+
+    auto add = [&](const char *name, int64_t n0, int64_t n1, int64_t n2, int64_t n3) {
+        if (omit == name) {
+            return;
+        }
+        ggml_tensor *t = ggml_new_tensor_4d(tensor_ctx, GGML_TYPE_F32, n0, n1, n2, n3);
+        ggml_set_name(t, name);
+        float *d = static_cast<float *>(t->data);
+        for (int64_t i = 0; i < ggml_nelements(t); ++i) {
+            d[i] = 0.01f * static_cast<float>(i);
+        }
+        gguf_add_tensor(gguf, t);
+    };
+
+    add("embeddings.cls_token", hidden, 1, 1, 1);
+    add("embeddings.position_embeddings", hidden, pos_rows_override >= 0 ? pos_rows_override : grid * grid + 1, 1, 1);
+    add("embeddings.patch_embeddings.projection.weight", 14, 14, 3, hidden);
+    add("embeddings.patch_embeddings.projection.bias", 1, 1, hidden, 1);
+    add("layernorm.weight", hidden, 1, 1, 1);
+    add("layernorm.bias", hidden, 1, 1, 1);
+    if (add_classifier) {
+        constexpr uint32_t num_classes = 2;
+        gguf_set_val_u32(gguf, "num_classes", num_classes);
+        for (uint32_t i = 0; i < num_classes; ++i) {
+            gguf_set_val_str(gguf, std::to_string(i).c_str(), std::to_string(i).c_str());
+        }
+        add("classifier.weight", 2 * hidden, num_classes, 1, 1);
+        add("classifier.bias", num_classes, 1, 1, 1);
+    }
+
+    const bool written = gguf_write_to_file(gguf, path.c_str(), false);
+    ggml_free(tensor_ctx);
+    gguf_free(gguf);
+    return written;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -245,8 +305,31 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Loader validation cases: each malformed GGUF must fail with a clean
+    // stderr error, exit 1, and no assert/abort.
+    const auto expect_load_failure = [&](const std::string &name, const std::string &omit, const char *needle,
+                                         int64_t patch_size_override = -1, int64_t pos_rows_override = -1) {
+        const std::string path = (test_directory() / name).string();
+        if (!write_complete_gguf(path, omit, patch_size_override, true, pos_rows_override)) {
+            return false;
+        }
+        std::string out;
+        std::string err;
+        const int   status = run_cli(cli, {"-m", path, "-i", "../assets/tench.jpg", "-c"}, out, err);
+        std::remove(path.c_str());
+        return status == 1 && out.empty() && err.find(needle) != std::string::npos &&
+               err.find("assert") == std::string::npos;
+    };
+    if (!expect_load_failure("missing-key.gguf", "hidden_size", "missing required key 'hidden_size'") ||
+        !expect_load_failure("bad-patch-size.gguf", "", "invalid gguf hparams", 0) ||
+        !expect_load_failure("missing-pos-embed.gguf", "embeddings.position_embeddings",
+                             "missing required tensor 'embeddings.position_embeddings'") ||
+        !expect_load_failure("bad-pos-embed-shape.gguf", "", "embeddings.position_embeddings has shape", -1, 16)) {
+        return 1;
+    }
+
     const std::string topk_model = (test_directory() / "topk.gguf").string();
-    if (!write_minimal_gguf(topk_model, false, 4, 1, 1, false, true)) {
+    if (!write_complete_gguf(topk_model)) {
         return 1;
     }
     std::string topk_stdout;
@@ -262,7 +345,7 @@ int main(int argc, char **argv) {
     // --max-tokens 1 must reject any real input after model load, before
     // graph construction, with a clean stderr message and exit 1.
     const std::string cap_model = (test_directory() / "cap.gguf").string();
-    if (!write_minimal_gguf(cap_model, false, 4, 1, 1, false, true)) {
+    if (!write_complete_gguf(cap_model)) {
         return 1;
     }
     std::string cap_stdout;
