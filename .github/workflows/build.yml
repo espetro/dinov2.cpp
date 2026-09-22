@@ -81,5 +81,8 @@ jobs:
         run: >-
           clang-format-18 --dry-run --Werror
           src/image.cpp src/image.h
-          dinov2-cli.cpp dinov2.cpp dinov2.h
-          tests/test_image.cpp
+          src/dinov2-c.cpp src/dinov2-impl.h
+          include/dinov2.h
+          dinov2-cli.cpp dinov2.cpp
+          tests/test_image.cpp tests/test_dinov2.cpp
+          tests/test_dinov2_c.cpp tests/test_cli.cpp

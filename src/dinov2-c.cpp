@@ -81,8 +81,7 @@ const dino_output *output_at(const dino_ctx *ctx, int32_t index) {
 
 // dino_encode body; the public wrapper maps exceptions to DINO_STATUS_ERROR
 // so no C++ exception crosses the extern "C" boundary.
-enum dino_status encode_impl(dino_ctx &ctx, const dino_image *images, int32_t n_images,
-                             const dino_run_params &params) {
+enum dino_status encode_impl(dino_ctx &ctx, const dino_image *images, int32_t n_images, const dino_run_params &params) {
     const dino_model &model = *ctx.model;
     if (!images || n_images < 1 || n_images > (int32_t)DINO_MAX_BATCH) {
         return DINO_STATUS_INVALID_ARGUMENT;
