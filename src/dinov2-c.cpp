@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <vector>
 
@@ -78,7 +79,95 @@ const dino_output *output_at(const dino_ctx *ctx, int32_t index) {
     return &ctx->last_outputs[(size_t)index];
 }
 
+// dino_encode body; the public wrapper maps exceptions to DINO_STATUS_ERROR
+// so no C++ exception crosses the extern "C" boundary.
+enum dino_status encode_impl(dino_ctx &ctx, const dino_image *images, int32_t n_images,
+                             const dino_run_params &params) {
+    const dino_model &model = *ctx.model;
+    if (!images || n_images < 1 || n_images > (int32_t)DINO_MAX_BATCH) {
+        return DINO_STATUS_INVALID_ARGUMENT;
+    }
+    if (params.topk < 1) {
+        return DINO_STATUS_INVALID_ARGUMENT;
+    }
+    if (params.classify) {
+        if (!model.has_classifier) {
+            return DINO_STATUS_NO_CLASSIFIER;
+        }
+        if ((uint32_t)params.topk > model.hparams.num_classes) {
+            return DINO_STATUS_INVALID_ARGUMENT;
+        }
+    }
+
+    // validate the records and copy into tightly packed Image buffers
+    std::vector<Image> imgs((size_t)n_images);
+    for (int32_t i = 0; i < n_images; ++i) {
+        const dino_image &in     = images[i];
+        const int64_t     stride = in.stride == 0 ? (int64_t)in.width * 3 : in.stride;
+        if (!in.pixels || in.width <= 0 || in.height <= 0 || stride < (int64_t)in.width * 3) {
+            return DINO_STATUS_INVALID_ARGUMENT;
+        }
+        Image &img = imgs[(size_t)i];
+        img.nx     = in.width;
+        img.ny     = in.height;
+        img.c      = 3;
+        img.data.resize((size_t)in.width * in.height * 3);
+        for (int32_t y = 0; y < in.height; ++y) {
+            std::memcpy(img.data.data() + (size_t)y * in.width * 3, in.pixels + (size_t)y * stride,
+                        (size_t)in.width * 3);
+        }
+    }
+
+    // preprocess; the max_tokens cap applies to feature mode only, checked on
+    // the prospective output size before the (expensive) resize
+    const int64_t       token_limit = ctx.options.max_tokens >= 0
+                                          ? ctx.options.max_tokens
+                                          : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
+    std::vector<ImageF> imgs_f((size_t)n_images);
+    for (int32_t i = 0; i < n_images; ++i) {
+        if (token_limit > 0 && !params.classify) {
+            const ImgSize out_size  = dino_feature_output_size(imgs[(size_t)i], model.hparams, ctx.options);
+            const int64_t n_patches = (int64_t)(out_size.height / (int)model.hparams.patch_size) *
+                                      (out_size.width / (int)model.hparams.patch_size);
+            if (n_patches > token_limit) {
+                fprintf(stderr, "error: image %d yields %lld patch tokens after preprocessing (limit %lld)\n", (int)i,
+                        (long long)n_patches, (long long)token_limit);
+                return DINO_STATUS_TOO_MANY_TOKENS;
+            }
+        }
+        imgs_f[(size_t)i] = params.classify ? dino_classify_preprocess(imgs[(size_t)i], model.hparams)
+                                            : dino_feature_preprocess(imgs[(size_t)i], model.hparams, ctx.options);
+    }
+
+    // one graph requires equal dims: group consecutive same-sized images into
+    // chunks of at most ctx n_batch
+    const dino_run_options   run{params.classify, (uint32_t)params.topk, params.l2_normalize};
+    std::vector<dino_output> all;
+    all.reserve((size_t)n_images);
+    for (size_t s = 0; s < imgs_f.size();) {
+        size_t e = s + 1;
+        while (e < imgs_f.size() && e - s < ctx.options.n_batch && imgs_f[e].nx == imgs_f[s].nx &&
+               imgs_f[e].ny == imgs_f[s].ny) {
+            ++e;
+        }
+        const std::vector<ImageF>       chunk(imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e);
+        const std::vector<dino_output> &outs = dino_predict(model, ctx, chunk, run);
+        if (outs.empty()) {
+            return predict_status(ctx);
+        }
+        all.insert(all.end(), outs.begin(), outs.end());
+        s = e;
+    }
+    ctx.last_outputs = std::move(all);
+    return DINO_STATUS_SUCCESS;
+}
+
 } // namespace
+
+// No C++ exception may cross the extern "C" boundary: a bad_alloc from a
+// std::vector or a throwing backend must surface as NULL / DINO_STATUS_ERROR,
+// never as an exception the caller cannot catch. Every entry point that can
+// allocate or call into the engine wraps its body in try/catch(...).
 
 extern "C" {
 
@@ -87,12 +176,15 @@ const char *dino_version(void) {
 }
 
 void dino_backend_init(void) {
-    // resolve to the internal overload: loads dynamic backends once and
-    // initializes the best device; the backend itself is dropped here (this
-    // only warms the registry for later loads)
-    ggml_backend_t backend = ::dino_backend_init(nullptr);
-    if (backend) {
-        ggml_backend_free(backend);
+    try {
+        // resolve to the internal overload: loads dynamic backends once and
+        // initializes the best device; the backend itself is dropped here
+        // (this only warms the registry for later loads)
+        ggml_backend_t backend = ::dino_backend_init(nullptr);
+        if (backend) {
+            ggml_backend_free(backend);
+        }
+    } catch (...) {
     }
 }
 
@@ -129,15 +221,19 @@ dino_model *dino_model_load_from_file(const char *path, struct dino_model_params
         fprintf(stderr, "%s: path is NULL\n", __func__);
         return nullptr;
     }
-    dino_model *model = new (std::nothrow) dino_model;
-    if (!model) {
+    try {
+        // unique_ptr so a throw from the loader cannot leak a half-built model
+        std::unique_ptr<dino_model> model(new (std::nothrow) dino_model);
+        if (!model) {
+            return nullptr;
+        }
+        if (!dino_model_load(path, *model, to_model_options(params))) {
+            return nullptr;
+        }
+        return model.release();
+    } catch (...) {
         return nullptr;
     }
-    if (!dino_model_load(path, *model, to_model_options(params))) {
-        delete model;
-        return nullptr;
-    }
-    return model;
 }
 
 dino_model *dino_model_load_from_buffer(const void *data, size_t size, struct dino_model_params params) {
@@ -145,15 +241,18 @@ dino_model *dino_model_load_from_buffer(const void *data, size_t size, struct di
         fprintf(stderr, "%s: empty model buffer\n", __func__);
         return nullptr;
     }
-    dino_model *model = new (std::nothrow) dino_model;
-    if (!model) {
+    try {
+        std::unique_ptr<dino_model> model(new (std::nothrow) dino_model);
+        if (!model) {
+            return nullptr;
+        }
+        if (!dino_model_load_buffer(data, size, *model, to_model_options(params))) {
+            return nullptr;
+        }
+        return model.release();
+    } catch (...) {
         return nullptr;
     }
-    if (!dino_model_load_buffer(data, size, *model, to_model_options(params))) {
-        delete model;
-        return nullptr;
-    }
-    return model;
 }
 
 dino_model *dino_model_load_from_callback(dino_reader_callback_t read, void *userdata,
@@ -162,23 +261,29 @@ dino_model *dino_model_load_from_callback(dino_reader_callback_t read, void *use
         fprintf(stderr, "%s: read callback is NULL\n", __func__);
         return nullptr;
     }
-    dino_model *model = new (std::nothrow) dino_model;
-    if (!model) {
+    try {
+        std::unique_ptr<dino_model> model(new (std::nothrow) dino_model);
+        if (!model) {
+            return nullptr;
+        }
+        if (!dino_model_load_callback(read, userdata, *model, to_model_options(params))) {
+            return nullptr;
+        }
+        return model.release();
+    } catch (...) {
         return nullptr;
     }
-    if (!dino_model_load_callback(read, userdata, *model, to_model_options(params))) {
-        delete model;
-        return nullptr;
-    }
-    return model;
 }
 
 void dino_model_free(dino_model *model) {
     if (!model) {
         return;
     }
-    dino_model_unload(*model);
-    delete model;
+    try {
+        dino_model_unload(*model);
+        delete model;
+    } catch (...) {
+    }
 }
 
 uint32_t dino_model_hidden_size(const dino_model *model) {
@@ -218,23 +323,29 @@ dino_ctx *dino_init_from_model(dino_model *model, struct dino_ctx_params params)
         fprintf(stderr, "%s: invalid ctx params\n", __func__);
         return nullptr;
     }
-    dino_ctx *ctx = new (std::nothrow) dino_ctx;
-    if (!ctx) {
+    try {
+        std::unique_ptr<dino_ctx> ctx(new (std::nothrow) dino_ctx);
+        if (!ctx) {
+            return nullptr;
+        }
+        if (!dino_ctx_init(*ctx, *model, options)) {
+            return nullptr;
+        }
+        return ctx.release();
+    } catch (...) {
         return nullptr;
     }
-    if (!dino_ctx_init(*ctx, *model, options)) {
-        delete ctx;
-        return nullptr;
-    }
-    return ctx;
 }
 
 void dino_free(dino_ctx *ctx) {
     if (!ctx) {
         return;
     }
-    dino_ctx_free(*ctx);
-    delete ctx;
+    try {
+        dino_ctx_free(*ctx);
+        delete ctx;
+    } catch (...) {
+    }
 }
 
 enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *images, int32_t n_images,
@@ -242,83 +353,14 @@ enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *images, int
     if (!ctx || !ctx->model || !ctx->sched) {
         return DINO_STATUS_INVALID_ARGUMENT;
     }
-    const dino_model &model = *ctx->model;
-    if (!images || n_images < 1 || n_images > (int32_t)DINO_MAX_BATCH) {
-        return DINO_STATUS_INVALID_ARGUMENT;
+    try {
+        return encode_impl(*ctx, images, n_images, params);
+    } catch (...) {
+        // an allocation or a backend threw mid-encode; do not leave partial
+        // chunk outputs behind
+        ctx->last_outputs.clear();
+        return DINO_STATUS_ERROR;
     }
-    if (params.topk < 1) {
-        return DINO_STATUS_INVALID_ARGUMENT;
-    }
-    if (params.classify) {
-        if (!model.has_classifier) {
-            return DINO_STATUS_NO_CLASSIFIER;
-        }
-        if ((uint32_t)params.topk > model.hparams.num_classes) {
-            return DINO_STATUS_INVALID_ARGUMENT;
-        }
-    }
-
-    // validate the records and copy into tightly packed Image buffers
-    std::vector<Image> imgs((size_t)n_images);
-    for (int32_t i = 0; i < n_images; ++i) {
-        const dino_image &in     = images[i];
-        const int64_t     stride = in.stride == 0 ? (int64_t)in.width * 3 : in.stride;
-        if (!in.pixels || in.width <= 0 || in.height <= 0 || stride < (int64_t)in.width * 3) {
-            return DINO_STATUS_INVALID_ARGUMENT;
-        }
-        Image &img = imgs[(size_t)i];
-        img.nx     = in.width;
-        img.ny     = in.height;
-        img.c      = 3;
-        img.data.resize((size_t)in.width * in.height * 3);
-        for (int32_t y = 0; y < in.height; ++y) {
-            std::memcpy(img.data.data() + (size_t)y * in.width * 3, in.pixels + (size_t)y * stride,
-                        (size_t)in.width * 3);
-        }
-    }
-
-    // preprocess; the max_tokens cap applies to feature mode only, checked on
-    // the prospective output size before the (expensive) resize
-    const int64_t       token_limit = ctx->options.max_tokens >= 0
-                                          ? ctx->options.max_tokens
-                                          : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
-    std::vector<ImageF> imgs_f((size_t)n_images);
-    for (int32_t i = 0; i < n_images; ++i) {
-        if (token_limit > 0 && !params.classify) {
-            const ImgSize out_size  = dino_feature_output_size(imgs[(size_t)i], model.hparams, ctx->options);
-            const int64_t n_patches = (int64_t)(out_size.height / (int)model.hparams.patch_size) *
-                                      (out_size.width / (int)model.hparams.patch_size);
-            if (n_patches > token_limit) {
-                fprintf(stderr, "error: image %d yields %lld patch tokens after preprocessing (limit %lld)\n", (int)i,
-                        (long long)n_patches, (long long)token_limit);
-                return DINO_STATUS_TOO_MANY_TOKENS;
-            }
-        }
-        imgs_f[(size_t)i] = params.classify ? dino_classify_preprocess(imgs[(size_t)i], model.hparams)
-                                            : dino_feature_preprocess(imgs[(size_t)i], model.hparams, ctx->options);
-    }
-
-    // one graph requires equal dims: group consecutive same-sized images into
-    // chunks of at most ctx n_batch
-    const dino_run_options   run{params.classify, (uint32_t)params.topk, params.l2_normalize};
-    std::vector<dino_output> all;
-    all.reserve((size_t)n_images);
-    for (size_t s = 0; s < imgs_f.size();) {
-        size_t e = s + 1;
-        while (e < imgs_f.size() && e - s < ctx->options.n_batch && imgs_f[e].nx == imgs_f[s].nx &&
-               imgs_f[e].ny == imgs_f[s].ny) {
-            ++e;
-        }
-        const std::vector<ImageF>       chunk(imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e);
-        const std::vector<dino_output> &outs = dino_predict(model, *ctx, chunk, run);
-        if (outs.empty()) {
-            return predict_status(*ctx);
-        }
-        all.insert(all.end(), outs.begin(), outs.end());
-        s = e;
-    }
-    ctx->last_outputs = std::move(all);
-    return DINO_STATUS_SUCCESS;
 }
 
 int32_t dino_output_n_images(const dino_ctx *ctx) {
