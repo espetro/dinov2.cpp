@@ -87,6 +87,31 @@ each input gets one JSON line on stdout, identical to running it alone
 
 That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
 
+## C API
+
+Embedding `dinov2.cpp` instead of shelling out? The build produces
+`libdinov2` (static by default, shared with `-DBUILD_SHARED_LIBS=ON`) and a
+pure C header at [`include/dinov2.h`](include/dinov2.h): opaque handles, no
+ggml types, status codes instead of aborts. Models load from a file, a memory
+buffer, or a read callback; `dino_encode` runs a batch of raw RGB8 images and
+the `dino_output_*` accessors return borrowed pointers into the context.
+
+```c
+#include "dinov2.h"
+
+dino_model *m = dino_model_load_from_file("models/model.gguf", dino_model_default_params());
+dino_ctx   *c = dino_init_from_model(m, dino_ctx_default_params());
+
+dino_image img = {pixels, w, h, 0}; // interleaved RGB8, stride 0 = packed
+if (dino_encode(c, &img, 1, dino_run_default_params()) == DINO_STATUS_SUCCESS) {
+    const float *cls = dino_output_cls(c, 0); // dino_model_hidden_size(m) floats
+}
+dino_free(c);
+dino_model_free(m);
+```
+
+The API is unstable for the 0.4.x line; see [docs/stability.md](docs/stability.md).
+
 ## Features
 
 | Feature | Detail |
