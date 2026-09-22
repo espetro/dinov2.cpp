@@ -5,6 +5,13 @@ best-effort**: `DINOV2_BUILD_SERVER` is OFF by default, it is not shipped in
 release archives, and it is not covered by the tier-1 stability contract
 ([docs/tiers.md](../../docs/tiers.md)).
 
+## Demo
+
+<p align="center"><img src="../../assets/server-demo.gif" width="700" alt="dinov2-server: startup, /health, /v1/models, and a /v1/embeddings upload"></p>
+
+Recorded with asciinema: [assets/server-demo.cast](../../assets/server-demo.cast)
+(replay with `asciinema play assets/server-demo.cast`).
+
 ## Build
 
 ```bash

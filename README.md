@@ -4,6 +4,8 @@
 
 Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system dependencies at runtime.
 
+<p align="center"><img src="assets/pca-demo.gif" width="600" alt="Video frames next to their DINOv2 patch PCA feature maps"></p>
+
 [![Release](https://img.shields.io/github/v/release/espetro/dinov2.cpp)](https://github.com/espetro/dinov2.cpp/releases)
 [![CI](https://github.com/espetro/dinov2.cpp/actions/workflows/build.yml/badge.svg)](https://github.com/espetro/dinov2.cpp/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

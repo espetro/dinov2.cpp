@@ -1,0 +1,11 @@
+{"version":2,"width":100,"height":30,"timestamp":1790118102,"idle_time_limit":2.0,"command":"bash /tmp/dinov2-media/server-demo.sh","title":"dinov2-server demo","env":{"SHELL":"/bin/zsh"}}
+[0.020782, "o", "$ ./build-server/bin/dinov2-server -m models/dinov2-small/model.gguf --port 18080 &\r\n"]
+[2.195679, "o", "$ curl -s localhost:18080/health\r\n"]
+[3.138932, "o", "{\"status\":\"ok\"}"]
+[3.13923, "o", "\r\n"]
+[4.153014, "o", "$ curl -s localhost:18080/v1/models | jq\r\n"]
+[5.077826, "o", "\u001b[1;39m{\u001b[0m\r\n  \u001b[1;34m\"model\"\u001b[0m\u001b[1;39m:\u001b[0m \u001b[0;32m\"models/dinov2-small/model.gguf\"\u001b[0m\u001b[1;39m,\u001b[0m\r\n  \u001b[1;34m\"version\"\u001b[0m\u001b[1;39m:\u001b[0m \u001b[0;32m\"0.4.0\"\u001b[0m\u001b[1;39m,\u001b[0m\r\n  \u001b[1;34m\"hidden_size\"\u001b[0m\u001b[1;39m:\u001b[0m \u001b[0;39m384\u001b[0m\u001b[1;39m,\u001b[0m\r\n  \u001b[1;34m\"patch_size\"\u001b[0m\u001b[1;39m:\u001b[0m \u001b[0;39m14\u001b[0m\u001b[1;39m,\u001b[0m\r\n  \u001b[1;34m\"n_register_tokens\"\u001b[0m\u001b[1;39m:\u001b[0m \u001b[0;39m0\u001b[0m\u001b[1;39m,\u001b[0m\r\n  \u001b[1;34m\"has_classifier\"\u001b[0m\u001b[1;39m:\u001b[0m \u001b[0;39mtrue\u001b[0m\u001b[1;39m,\u001b[0m\r\n  \u001b[1;34m\"n_classes\"\u001b[0m\u001b[1;39m:\u001b[0m \u001b[0;39m1000\u001b[0m\r\n\u001b[1;39m}\u001b[0m\r\n"]
+[6.087245, "o", "$ curl -s -F image=@assets/tench.jpg localhost:18080/v1/embeddings | jq '.cls | length'\r\n"]
+[7.299248, "o", "\u001b[0;39m384\u001b[0m\r\n"]
+[8.308766, "o", "$ kill %1  # stop the server\r\n"]
+[9.827313, "x", "0"]
