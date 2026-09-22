@@ -84,7 +84,7 @@ graph LR
     Test["tests/test_image.cpp<br/>tests/test_dinov2.cpp<br/>tests/test_dinov2_c.cpp<br/>tests/test_cli.cpp"]
     Tool["scripts/bench.sh<br/>scripts/dinov2-to-gguf.py<br/>scripts/publish-gguf.sh"]
     Build["CMakeLists.txt<br/>CMakePresets.json<br/>src/stb_image.h<br/>src/stb_image_write.h<br/>src/doctest.h"]
-    Tier2["wasm/ (embind shim + demo)<br/>tools/server/ (dinov2-server)<br/>examples/ (dedup, ci-visual-regression)"]
+    Tier2["wasm/ (embind shim + demo)<br/>tools/server/ (dinov2-server)<br/>examples/ (dedup, ci-visual-regression, container)"]
     CI[".github/workflows/release.yml<br/>.github/workflows/build.yml<br/>.github/workflows/extras.yml<br/>.github/workflows/convert-and-publish-gguf.yml"]
     Doc["README.md<br/>CONTRIBUTING.md<br/>docs/cli.md<br/>docs/build.md<br/>docs/benchmarks.md<br/>docs/hf-publishing.md<br/>docs/stability.md + docs/tiers.md<br/>docs/wasm.md<br/>ARCHITECTURE.md<br/>CHANGELOG.md"]
     Asset["assets/logo/<br/>assets/tench.jpg<br/>assets/logo.png"]
@@ -117,7 +117,7 @@ Abridged table:
 | `CMakeLists.txt`, `CMakePresets.json`, vendored stb/doctest | Build | CMake build + vendored single-file deps. |
 | `wasm/` | Tier-2 | Emscripten embind shim over the C API + browser demo (`DINOV2_BUILD_WASM`). |
 | `tools/server/` | Tier-2 | `dinov2-server` HTTP embeddings service over the C API + vendored cpp-httplib (`DINOV2_BUILD_SERVER`). |
-| `examples/` | Tier-2 | Copy-paste examples: `dedup/` (near-duplicate finder), `ci-visual-regression/` (GitHub Action). |
+| `examples/` | Tier-2 | Copy-paste examples: `dedup/` (near-duplicate finder), `ci-visual-regression/` (GitHub Action), `container/` (FROM scratch demo image). |
 | `.github/workflows/*` | CI | build, release, convert-and-publish, parity, bench, changelog, extras (tier-2 advisory jobs). |
 | `README.md`, `CONTRIBUTING.md`, `docs/*`, `ARCHITECTURE.md`, `RELEASE_NOTES_*.md` | Doc | User + contributor-facing docs. |
 | `assets/*` | Asset | Logo + default input image. |
