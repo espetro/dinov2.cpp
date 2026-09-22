@@ -1283,8 +1283,15 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
 
     const struct ggml_tensor *pos_embed = ggml_get_tensor(model.ctx, "embeddings.position_embeddings");
 
+    // read the table through the backend: ->data is a device pointer on CUDA
+    // and only valid for CPU/Metal buffers. One tensor_get per predict keeps
+    // this a local change; caching an f32 copy in dino_model would avoid the
+    // per-call copy but needs a new public member (PR B territory).
+    std::vector<float> pos_embed_host(ggml_nelements(pos_embed));
+    ggml_backend_tensor_get(pos_embed, pos_embed_host.data(), 0, ggml_nbytes(pos_embed));
+
     const std::vector<float> pos_embed_fixed_data =
-        interpolate_pos_embed({nx, ny}, (float *)(pos_embed->data), model.hparams);
+        interpolate_pos_embed({nx, ny}, pos_embed_host.data(), model.hparams);
 
     struct ggml_tensor *pos_embed_fixed = ggml_graph_get_tensor(gf, "pos_embed_fixed");
 
@@ -1301,11 +1308,18 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     // cls_token is marked as an output unconditionally by forward_features;
     // read it in both classify and feature modes. It is a dense
     // (hidden, 1, 1, B) block: image b's vector starts at b * hidden_size.
-    const float *cls_data = ggml_get_data_f32(ggml_graph_get_tensor(gf, "cls_token"));
+    // ggml_backend_tensor_get is backend-agnostic; ->data/ggml_get_data_f32
+    // would be device pointers on GPU backends.
+    std::vector<float> cls_buf((size_t)hidden_size * n_batch);
+    ggml_backend_tensor_get(ggml_graph_get_tensor(gf, "cls_token"), cls_buf.data(), 0, cls_buf.size() * sizeof(float));
+    const float *cls_data = cls_buf.data();
 
     if (params.classify) {
         // probs is a dense (num_classes, 1, 1, B) block
-        const float *probs_data = ggml_get_data_f32(ggml_graph_get_tensor(gf, "probs"));
+        std::vector<float> probs_buf((size_t)model.hparams.num_classes * n_batch);
+        ggml_backend_tensor_get(ggml_graph_get_tensor(gf, "probs"), probs_buf.data(), 0,
+                                probs_buf.size() * sizeof(float));
+        const float *probs_data = probs_buf.data();
         for (size_t b = 0; b < n_batch; ++b) {
             dino_output &output = outputs[b];
             output.cls_token    = std::vector<float>(cls_data + b * hidden_size, cls_data + (b + 1) * hidden_size);
@@ -1337,7 +1351,10 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     } else {
         // patch_tokens is a dense (hidden, num_patches, 1, B) block; each
         // image's region is a contiguous num_patches * hidden_size slice
-        const float *patch_tokens_data = ggml_get_data_f32(ggml_graph_get_tensor(gf, "patch_tokens"));
+        std::vector<float> patch_tokens_buf((size_t)num_patches * hidden_size * n_batch);
+        ggml_backend_tensor_get(ggml_graph_get_tensor(gf, "patch_tokens"), patch_tokens_buf.data(), 0,
+                                patch_tokens_buf.size() * sizeof(float));
+        const float *patch_tokens_data = patch_tokens_buf.data();
         for (size_t b = 0; b < n_batch; ++b) {
             dino_output &output = outputs[b];
             output.cls_token    = std::vector<float>(cls_data + b * hidden_size, cls_data + (b + 1) * hidden_size);
