@@ -22,6 +22,10 @@ __pycache__/
 /models
 *.gguf
 
+# wasm build artifacts copied next to the demo (see docs/wasm.md)
+/wasm/dinov2-wasm.js
+/wasm/dinov2-wasm.wasm
+
 # OS
 .DS_Store
 
