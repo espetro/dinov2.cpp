@@ -1,7 +1,7 @@
 # HF publishing setup
 
 The [`convert-and-publish-gguf`](../.github/workflows/convert-and-publish-gguf.yml)
-workflow converts the 8 DINOv2 variants to f16 GGUF and uploads them to the
+workflow converts the 16 DINOv2 variants to f16 GGUF and uploads them to the
 `dinov2-cpp-core/<variant>-gguf` repos on Hugging Face. It runs monthly (cron `0 6 1 * *`)
 and on demand via `workflow_dispatch`.
 
@@ -29,15 +29,28 @@ and on demand via `workflow_dispatch`.
 - The `giant` variants need ~12-13 GB transient disk, so those jobs free runner
   disk space first.
 
-## The 8 published repos
+## The 16 published repos
 
-| Variant | HF repo |
-|---|---|
-| small | `dinov2-cpp-core/dinov2-small-gguf` |
-| base | `dinov2-cpp-core/dinov2-base-gguf` |
-| large | `dinov2-cpp-core/dinov2-large-gguf` |
-| giant | `dinov2-cpp-core/dinov2-giant-gguf` |
-| small (registers) | `dinov2-cpp-core/dinov2-with-registers-small-gguf` |
-| base (registers) | `dinov2-cpp-core/dinov2-with-registers-base-gguf` |
-| large (registers) | `dinov2-cpp-core/dinov2-with-registers-large-gguf` |
-| giant (registers) | `dinov2-cpp-core/dinov2-with-registers-giant-gguf` |
+| Variant | Source checkpoint | HF repo |
+|---|---|---|
+| small | `facebook/dinov2-small-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-small-gguf` |
+| base | `facebook/dinov2-base-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-base-gguf` |
+| large | `facebook/dinov2-large-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-large-gguf` |
+| giant | `facebook/dinov2-giant-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-giant-gguf` |
+| small (registers) | `facebook/dinov2-with-registers-small-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-with-registers-small-gguf` |
+| base (registers) | `facebook/dinov2-with-registers-base-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-with-registers-base-gguf` |
+| large (registers) | `facebook/dinov2-with-registers-large-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-with-registers-large-gguf` |
+| giant (registers) | `facebook/dinov2-with-registers-giant-imagenet1k-1-layer` | `dinov2-cpp-core/dinov2-with-registers-giant-gguf` |
+| small (backbone) | `facebook/dinov2-small` | `dinov2-cpp-core/dinov2-backbone-small-gguf` |
+| base (backbone) | `facebook/dinov2-base` | `dinov2-cpp-core/dinov2-backbone-base-gguf` |
+| large (backbone) | `facebook/dinov2-large` | `dinov2-cpp-core/dinov2-backbone-large-gguf` |
+| giant (backbone) | `facebook/dinov2-giant` | `dinov2-cpp-core/dinov2-backbone-giant-gguf` |
+| small (backbone, registers) | `facebook/dinov2-with-registers-small` | `dinov2-cpp-core/dinov2-backbone-with-registers-small-gguf` |
+| base (backbone, registers) | `facebook/dinov2-with-registers-base` | `dinov2-cpp-core/dinov2-backbone-with-registers-base-gguf` |
+| large (backbone, registers) | `facebook/dinov2-with-registers-large` | `dinov2-cpp-core/dinov2-backbone-with-registers-large-gguf` |
+| giant (backbone, registers) | `facebook/dinov2-with-registers-giant` | `dinov2-cpp-core/dinov2-backbone-with-registers-giant-gguf` |
+
+The `dinov2-backbone-*` variants convert the backbone-only checkpoints, so
+their GGUFs support feature modes only (`--print-embeddings`,
+`--print-patch-tokens`, `-o` PCA, `--bench`) and reject `-c`. See
+[cli.md](cli.md#backbone-only-checkpoints).
