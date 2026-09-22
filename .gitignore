@@ -30,3 +30,8 @@ __pycache__/
 
 # local
 .publish-logs/
+
+# local agent state
+.superpowers/
+.agents/plans/
+.agents/drafts/
