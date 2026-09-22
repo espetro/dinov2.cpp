@@ -202,18 +202,21 @@ Ready-to-download f16 GGUF weights, published by CI to the [`dinov2-cpp-core`](h
 
 Backbone-only checkpoints carry the same encoder weights without the ImageNet
 classifier head. They run the feature modes (`--print-embeddings`,
-`--print-patch-tokens`, `-o` PCA, `--bench`) and reject `-c` cleanly:
+`--print-patch-tokens`, `-o` PCA, `--bench`) and reject `-c` cleanly. The
+`dinov2-backbone-*` repos below are wired into the
+[publish workflow](docs/hf-publishing.md) but are not published on Hugging
+Face yet; the table lists the target repo names and expected sizes:
 
-| Model | GGUF download | Size | Recommendation |
+| Model | GGUF repo (pending publish) | Size | Recommendation |
 |:-----:|:--------------|-----:|:---------------|
-| small (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-small-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-small-gguf) | ~50 MB | Feature mode only; no classifier head |
-| base (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-base-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-base-gguf) | ~180 MB | Feature mode only; no classifier head |
-| large (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-large-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-large-gguf) | ~620 MB | Feature mode only; no classifier head |
-| giant (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-giant-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-giant-gguf) | ~2.2 GB | Feature mode only; no classifier head |
-| small (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-small-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-small-gguf) | ~50 MB | Feature mode only; no classifier head |
-| base (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-base-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-base-gguf) | ~180 MB | Feature mode only; no classifier head |
-| large (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-large-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-large-gguf) | ~620 MB | Feature mode only; no classifier head |
-| giant (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-giant-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-giant-gguf) | ~2.2 GB | Feature mode only; no classifier head |
+| small (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-small-gguf` | ~50 MB | Feature mode only; no classifier head |
+| base (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-base-gguf` | ~180 MB | Feature mode only; no classifier head |
+| large (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-large-gguf` | ~620 MB | Feature mode only; no classifier head |
+| giant (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-giant-gguf` | ~2.2 GB | Feature mode only; no classifier head |
+| small (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-small-gguf` | ~50 MB | Feature mode only; no classifier head |
+| base (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-base-gguf` | ~180 MB | Feature mode only; no classifier head |
+| large (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-large-gguf` | ~620 MB | Feature mode only; no classifier head |
+| giant (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-giant-gguf` | ~2.2 GB | Feature mode only; no classifier head |
 
 For patch and dense feature workflows, the register-token variants are the recommended starting point. In the settings studied in [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588), register tokens reduce high-norm patch-token artifacts and produce smoother local feature and attention maps. Use them with `--print-patch-tokens`, PCA, dense features, and object discovery. This is not a universal accuracy claim: the official [DINOv2 results](https://github.com/facebookresearch/dinov2/blob/main/README.md) show classification and retrieval results that depend on the task and model size. Choose the no-register variant for exact baseline reproduction or task-specific classification and retrieval comparisons.
 
