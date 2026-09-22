@@ -177,14 +177,10 @@ const char *dino_version(void) {
 }
 
 void dino_backend_init(void) {
+    // warms the registry for later loads; opening a device is the job of the
+    // model-load calls, so no backend is initialized here
     try {
-        // resolve to the internal overload: loads dynamic backends once and
-        // initializes the best device; the backend itself is dropped here
-        // (this only warms the registry for later loads)
-        ggml_backend_t backend = ::dino_backend_init(nullptr);
-        if (backend) {
-            ggml_backend_free(backend);
-        }
+        ::dino_backend_load_all();
     } catch (...) {
     }
 }

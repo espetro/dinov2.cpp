@@ -203,12 +203,16 @@ std::vector<float> interpolate_pos_embed(const ImgSize       img_size,
     return pos_embed_new;
 }
 
-ggml_backend_t dino_backend_init(const char *device_name) {
+void dino_backend_load_all(void) {
     // Populate the registry exactly once: a reg_count()==0 guard cannot work
     // because merely touching the registry lazily registers the built-in CPU
     // backend, so the count is never 0 when observed.
     static std::once_flag backends_loaded;
     std::call_once(backends_loaded, ggml_backend_load_all);
+}
+
+ggml_backend_t dino_backend_init(const char *device_name) {
+    dino_backend_load_all();
     if (device_name && device_name[0] != '\0') {
         ggml_backend_t backend = ggml_backend_init_by_name(device_name, nullptr);
         if (!backend) {

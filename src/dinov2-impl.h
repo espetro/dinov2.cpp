@@ -99,6 +99,11 @@ struct dino_model_options {
     std::string device;                     // "" = auto (ggml_backend_init_best); else a ggml device name
 };
 
+// Load every available backend into the ggml registry, once. Model loads
+// call this lazily; calling it up front (the public dino_backend_init) only
+// warms the registry and opens no device.
+void dino_backend_load_all(void);
+
 // Initialize a compute backend through the ggml registry. Loads dynamic
 // backends lazily (ggml_backend_load_all) when the registry is empty, then
 // returns ggml_backend_init_by_name(device_name) for a non-empty name or
