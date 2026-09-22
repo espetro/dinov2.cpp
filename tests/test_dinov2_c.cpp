@@ -445,6 +445,13 @@ TEST_CASE("c api: error paths return status codes") {
     CHECK(dino_encode(ctx, &img, 0, run) == DINO_STATUS_INVALID_ARGUMENT);
     CHECK(dino_encode(ctx, &img, DINO_MAX_BATCH + 1, run) == DINO_STATUS_INVALID_ARGUMENT);
 
+    // a failed encode clears the previous outputs
+    REQUIRE(dino_encode(ctx, &img, 1, run) == DINO_STATUS_SUCCESS);
+    CHECK(dino_output_n_images(ctx) == 1);
+    CHECK(dino_encode(ctx, &img, 0, run) == DINO_STATUS_INVALID_ARGUMENT);
+    CHECK(dino_output_n_images(ctx) == 0);
+    CHECK(dino_output_cls(ctx, 0) == nullptr);
+
     dino_image bad = img;
     bad.pixels     = nullptr;
     CHECK(dino_encode(ctx, &bad, 1, run) == DINO_STATUS_INVALID_ARGUMENT);

@@ -353,12 +353,12 @@ enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *images, int
     if (!ctx || !ctx->model || !ctx->sched) {
         return DINO_STATUS_INVALID_ARGUMENT;
     }
+    // every call replaces the ctx's outputs, failed ones included: drop the
+    // previous run up front so accessors never see stale results
+    ctx->last_outputs.clear();
     try {
         return encode_impl(*ctx, images, n_images, params);
     } catch (...) {
-        // an allocation or a backend threw mid-encode; do not leave partial
-        // chunk outputs behind
-        ctx->last_outputs.clear();
         return DINO_STATUS_ERROR;
     }
 }

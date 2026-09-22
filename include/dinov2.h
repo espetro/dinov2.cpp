@@ -124,7 +124,9 @@ DINO_API void      dino_free(dino_ctx *ctx);
 // n_images must be 1..DINO_MAX_BATCH. Feature mode groups consecutive
 // same-sized images into chunks of up to ctx n_batch; classify mode always
 // produces 224x224 inputs, so the whole call is one chunk when n_batch allows.
-// Results are stored in the ctx; use the dino_output_* accessors.
+// Results are stored in the ctx; use the dino_output_* accessors. Every call
+// replaces the ctx's outputs: on any return other than DINO_STATUS_SUCCESS
+// the previous outputs are gone and the accessors report 0 images.
 DINO_API enum dino_status dino_encode(dino_ctx *ctx, const struct dino_image *images, int32_t n_images,
                                       struct dino_run_params params);
 
