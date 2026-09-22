@@ -28,6 +28,14 @@ on:
         required: false
         default: "12"
         type: string
+      platform:
+        description: "GitHub-hosted runner label for the bench job"
+        required: false
+        default: "ubuntu-latest"
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
 
 # Bench is on-demand: each workflow_dispatch run is independent and
 # parallel-safe (different `runs` get different run IDs and thus
@@ -41,7 +49,7 @@ permissions:
 
 jobs:
   bench:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.platform }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +134,7 @@ jobs:
         env:
           BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
           BENCH_VARIANT_INPUT: ${{ inputs.variant }}
+          BENCH_PLATFORM: ${{ inputs.platform }}
         run: |
           set -euo pipefail
           provenance_path=benchmark_provenance.txt
@@ -138,7 +147,7 @@ jobs:
             printf 'models=%s\n' "$BENCH_MODELS"
             printf 'image_path=assets/tench.jpg\n'
             printf 'build_configuration=Release\n'
-            printf 'platform=ubuntu-latest\n'
+            printf 'platform=%s\n' "$BENCH_PLATFORM"
             printf 'quantization=f16 only\n'
           } > "$provenance_path"
           variant_list="${BENCH_MODELS//,/ }"
@@ -164,17 +173,20 @@ jobs:
           BENCH_MODELS: ${{ steps.variants.outputs.BENCH_MODELS }}
           BENCH_REPEATS: ${{ inputs.repeats }}
           BENCH_THREADS: ${{ inputs.threads }}
+          BENCH_PLATFORM: ${{ inputs.platform }}
           BENCH_BUILD_CONFIG: Release
         run: |
           set -euo pipefail
           echo "models selected: $BENCH_MODELS"
           echo "repeats: $BENCH_REPEATS"
           echo "threads: $BENCH_THREADS"
+          echo "platform: $BENCH_PLATFORM"
           chmod +x scripts/bench.sh
           bash scripts/bench.sh \
             --models "$BENCH_MODELS" \
             --repeats "$BENCH_REPEATS" \
             --threads "$BENCH_THREADS" \
+            --platform "$BENCH_PLATFORM" \
             --image assets/tench.jpg \
             --bin build/bin/dinov2-cli \
             --out benchmark_results.txt

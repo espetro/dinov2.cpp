@@ -20,7 +20,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tga", ".webp"}
+# Formats decodable by vendored stb_image (v2.30). WebP, HEIC, RAW, and AVIF
+# are not supported: convert them first (sips, heif-convert, ffmpeg).
+EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tga"}
 
 
 def embed(cli: str, model: str, images: list[Path]) -> list[dict]:

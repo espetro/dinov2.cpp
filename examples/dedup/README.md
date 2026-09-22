@@ -28,6 +28,15 @@ open dupes.html
   grouping merely similar images. Tune on a small folder first.
 - `-o/--out`: where the HTML review page goes (default `dedup-report.html`).
 
+## Supported formats
+
+The CLI decodes images with vendored stb_image, so only `.jpg`, `.jpeg`,
+`.png`, `.bmp`, and `.tga` are scanned. WebP, HEIC, RAW, and AVIF files are
+skipped by `dedup.py` and would fail decode in `dinov2-cli` anyway; convert
+them first. On macOS, `sips -s format jpeg in.heic --out out.jpg` covers
+HEIC/WebP/RAW; elsewhere `heif-convert in.heic out.jpg` (libheif) or
+`ffmpeg -i in.webp out.jpg` do the same.
+
 The script uses `pooled` (`[cls || mean(patches)]`) when present and falls
 back to `cls`. For large folders the pairwise pass is O(n^2) in Python; a
 few thousand images is fine, hundreds of thousands will want a real index

@@ -85,7 +85,7 @@ each input gets one JSON line on stdout, identical to running it alone
 ./bin/dinov2-cli -m models/model.gguf -i a.jpg -i b.jpg --batch 2 --print-embeddings
 ```
 
-That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
+That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (i9-14900HX, see [benchmarks methodology](docs/benchmarks.md)).
 
 ## C API
 
@@ -137,6 +137,11 @@ Opt-in surfaces, off by default and not covered by the stability contract
 | **f16 GGUF weights** | Plus q4_0 through q8_0 quantization. |
 | **PyTorch-parity outputs** | CLS + patch embeddings as JSON, matching the reference implementation. |
 | **Cross-platform prebuilts** | macOS arm64, Linux x64/arm64, Windows x64. |
+
+**Limitations:** image decode is vendored stb_image only (JPEG, PNG, BMP,
+TGA; no HEIC, WebP, RAW, or AVIF, convert those first with `sips`,
+`heif-convert`, or `ffmpeg`). Embeddings are image-to-image: this is not
+CLIP and there are no text queries. Classification is ImageNet-1k only.
 
 ## Pre-converted GGUF weights
 
