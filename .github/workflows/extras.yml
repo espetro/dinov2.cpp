@@ -57,6 +57,79 @@ jobs:
             wasm/main.js
           retention-days: 14
 
-  # Placeholder for future tier-2 jobs: a llama.cpp-style http server example
-  # or the examples/ tree. Add jobs here with continue-on-error: true so they
-  # stay advisory.
+  # dinov2-server (tools/server/, DINOV2_BUILD_SERVER): build it, download
+  # the small GGUF (same pattern as the build.yml contract job, minus the
+  # hf CLI: a plain /resolve/ curl works for public repos), then curl
+  # /health and POST assets/tench.jpg to /v1/embeddings.
+  server:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Build dinov2-server
+        run: |
+          cmake -B build-server -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DDINOV2_BUILD_SERVER=ON -DDINOV2_BUILD_TESTS=OFF
+          cmake --build build-server --target dinov2-server -j"$(nproc)"
+
+      - name: Download small GGUF
+        run: |
+          mkdir -p models/dinov2-small
+          curl -L -o models/dinov2-small/model.gguf \
+            https://huggingface.co/dinov2-cpp-core/dinov2-small-gguf/resolve/main/model.gguf
+
+      - name: Smoke test endpoints
+        run: |
+          ./build-server/bin/dinov2-server \
+            -m models/dinov2-small/model.gguf --port 18080 --threads 2 &
+          SRV=$!
+          trap 'kill $SRV 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:18080/health && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18080/v1/models | jq -e '.hidden_size == 384'
+          curl -sf -F image=@assets/tench.jpg \
+            http://127.0.0.1:18080/v1/embeddings \
+            | jq -e '(.cls | length) == 384 and (.grid.h * .grid.w == .n_patches)'
+          B64=$(base64 -w0 assets/tench.jpg)
+          curl -sf -X POST http://127.0.0.1:18080/v1/embeddings \
+            -H 'Content-Type: application/json' \
+            -d "{\"image\":\"$B64\",\"l2_normalize\":true}" \
+            | jq -e '(.cls | length) == 384'
+
+  # examples/: syntax checks only. These are copy-paste examples for users,
+  # not wired gates; the job just keeps them from rotting.
+  examples:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check dedup.py syntax
+        run: python3 -m py_compile examples/dedup/dedup.py
+
+      - name: Check example workflow YAML parses
+        run: |
+          sudo apt-get update && sudo apt-get install -y python3-yaml
+          python3 -c "
+          import yaml
+          doc = yaml.safe_load(open('examples/ci-visual-regression/visual-regression.yml'))
+          assert 'jobs' in doc and 'compare' in doc['jobs'], 'missing compare job'
+          print('example workflow parses')
+          "
+
+      - name: actionlint on the example workflow
+        run: |
+          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -oneline examples/ci-visual-regression/visual-regression.yml
