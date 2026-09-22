@@ -240,6 +240,7 @@ int main(int argc, char **argv) {
         {"--no-resize", "--preprocess", "hf"},
         {"-c", "--preprocess", "hf"},
         {"-c", "--no-resize"},
+        {"-c", "-o", (test_directory() / "output").string()},
     };
     for (const auto &args : cases) {
         std::string stdout_output;
