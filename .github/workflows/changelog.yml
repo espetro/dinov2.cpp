@@ -25,6 +25,9 @@ jobs:
           # The tag push triggered this run; check out the *tag commit*
           # so git-cliff can see the release's commit history.
           ref: ${{ github.ref }}
+          # Full history + tags are required: without them git-cliff sees
+          # only the tag's top commit and emits a near-empty section.
+          fetch-depth: 0
 
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
