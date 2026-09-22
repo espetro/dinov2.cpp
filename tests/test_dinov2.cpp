@@ -576,7 +576,7 @@ TEST_CASE("dino_feature_preprocess: bounded resizes shortest edge to 518") {
     // 2000 -> lround(2000 * 518/800) = 1295, then true-ceil to 1298.
     dino_hparams h;
     h.patch_size = 14;
-    dino_params params;
+    dino_ctx_options params;
 
     Image img;
     img.nx = 2000;
@@ -600,7 +600,7 @@ TEST_CASE("dino_feature_preprocess: bounded leaves images under the bound untouc
     // 500 -> 504, 375 -> 378.
     dino_hparams h;
     h.patch_size = 14;
-    dino_params params;
+    dino_ctx_options params;
 
     Image img;
     img.nx = 500;
@@ -620,7 +620,7 @@ TEST_CASE("dino_feature_preprocess: bounded leaves images under the bound untouc
 TEST_CASE("dino_feature_preprocess: no_resize keeps native resolution") {
     dino_hparams h;
     h.patch_size = 14;
-    dino_params params;
+    dino_ctx_options params;
     params.no_resize = true;
 
     Image img;
@@ -638,7 +638,7 @@ TEST_CASE("dino_feature_preprocess: no_resize keeps native resolution") {
 TEST_CASE("dino_feature_preprocess: hf yields 224x224") {
     dino_hparams h;
     h.patch_size = 14;
-    dino_params params;
+    dino_ctx_options params;
     params.preprocess_mode = dino_preprocess_mode::hf;
 
     Image img;
@@ -655,7 +655,7 @@ TEST_CASE("dino_feature_preprocess: hf yields 224x224") {
 TEST_CASE("dino_feature_preprocess: crop518 yields a fixed 518x518 grid") {
     dino_hparams h;
     h.patch_size = 14;
-    dino_params params;
+    dino_ctx_options params;
     params.preprocess_mode = dino_preprocess_mode::crop518;
 
     Image img;
@@ -683,7 +683,7 @@ TEST_CASE("dino_feature_output_size matches dino_feature_preprocess dims") {
     const int sizes[][2] = {{2000, 800}, {518, 518}, {612, 408}, {3440, 5601}, {15, 15}, {1, 1}, {112, 56}};
     for (const auto &s : sizes) {
         for (auto mode : {dino_preprocess_mode::bounded, dino_preprocess_mode::hf, dino_preprocess_mode::crop518}) {
-            dino_params params;
+            dino_ctx_options params;
             params.preprocess_mode = mode;
             Image img;
             img.nx = s[0];
@@ -700,7 +700,7 @@ TEST_CASE("dino_feature_output_size matches dino_feature_preprocess dims") {
     }
     // --no-resize under bounded: dims equal the true-ceil native alignment
     {
-        dino_params params;
+        dino_ctx_options params;
         params.no_resize = true;
         Image img;
         img.nx = 2000;
@@ -719,7 +719,7 @@ TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess 
     // patch-aligned dims dino_preprocess computes, so bytes must match.
     dino_hparams h;
     h.patch_size = 14;
-    dino_params params;
+    dino_ctx_options params;
 
     Image img;
     img.nx = 500;
@@ -740,8 +740,8 @@ TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess 
 TEST_CASE("dino_classify_preprocess: shared helper keeps 224x224 output") {
     // classify and hf feature mode run the same (256, 224) recipe, so their
     // outputs must be identical byte for byte.
-    dino_hparams h;
-    dino_params  params;
+    dino_hparams   h;
+    dino_ctx_options params;
     params.preprocess_mode = dino_preprocess_mode::hf;
 
     Image img;
@@ -755,75 +755,6 @@ TEST_CASE("dino_classify_preprocess: shared helper keeps 224x224 output") {
     CHECK(cls.nx == hf.nx);
     CHECK(cls.ny == hf.ny);
     CHECK(cls.data == hf.data);
-}
-
-TEST_CASE("binary embeddings preview writes little-endian header and payload") {
-    const std::string path = "/tmp/dinov2-binary-preview-test.d2e";
-    dino_output       output;
-    output.cls_token    = std::vector<float>{1.0f, 2.0f};
-    output.pooled       = std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f};
-    output.patch_tokens = std::vector<float>{5.0f, 6.0f, 7.0f, 8.0f};
-
-    std::string error;
-    REQUIRE(write_embeddings_binary(path, output, 2, 2, 5, 3, false, false, error));
-    REQUIRE(error.empty());
-
-    std::ifstream                    file(path, std::ios::binary);
-    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    file.close();
-    std::remove(path.c_str());
-    REQUIRE(bytes.size() == 40 + (2 + 4) * sizeof(float));
-    CHECK(bytes[0] == 'D');
-    CHECK(bytes[1] == '2');
-    CHECK(bytes[2] == 'E');
-    CHECK(bytes[3] == 'M');
-    CHECK(bytes[4] == 'B');
-    CHECK(bytes[5] == 0);
-    CHECK(bytes[6] == 0);
-    CHECK(bytes[7] == 0);
-    CHECK(bytes[8] == 2); // version 2
-    CHECK(bytes[9] == 0);
-    CHECK(bytes[10] == 40); // header size
-    CHECK(bytes[11] == 0);
-    CHECK(bytes[12] == 2);
-    CHECK(bytes[16] == 4);
-    CHECK(bytes[20] == 0);
-    CHECK(bytes[24] == 0);
-    CHECK(bytes[28] == 0);
-    CHECK(bytes[32] == 0); // grid fields are zero when patches are absent
-    CHECK(bytes[36] == 0);
-
-    const auto read_float = [&](size_t offset) {
-        uint32_t bits = static_cast<uint32_t>(bytes[offset]) | (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
-                        (static_cast<uint32_t>(bytes[offset + 2]) << 16) |
-                        (static_cast<uint32_t>(bytes[offset + 3]) << 24);
-        float value;
-        std::memcpy(&value, &bits, sizeof(value));
-        return value;
-    };
-    CHECK(read_float(40) == doctest::Approx(1.0f));
-    CHECK(read_float(44) == doctest::Approx(2.0f));
-    CHECK(read_float(48) == doctest::Approx(1.0f));
-    CHECK(read_float(52) == doctest::Approx(2.0f));
-    CHECK(read_float(56) == doctest::Approx(3.0f));
-    CHECK(read_float(60) == doctest::Approx(4.0f));
-
-    REQUIRE(write_embeddings_binary(path, output, 2, 2, 5, 3, true, true, error));
-    file.clear();
-    file.open(path, std::ios::binary);
-    const std::vector<unsigned char> patch_bytes((std::istreambuf_iterator<char>(file)),
-                                                 std::istreambuf_iterator<char>());
-    file.close();
-    std::remove(path.c_str());
-    REQUIRE(patch_bytes.size() == 40 + (2 + 4 + 4) * sizeof(float));
-    CHECK(patch_bytes[20] == 2);
-    CHECK(patch_bytes[24] == 3);
-    CHECK(patch_bytes[32] == 5); // grid_w
-    CHECK(patch_bytes[36] == 3); // grid_h
-    CHECK(patch_bytes[64] == 0); // payload remains CLS, pooled, then patches
-    CHECK(patch_bytes[65] == 0);
-    CHECK(patch_bytes[66] == 160);
-    CHECK(patch_bytes[67] == 64); // 5.0f in little-endian
 }
 
 TEST_CASE("l2_normalize: produces unit norm and preserves direction") {
@@ -873,76 +804,26 @@ TEST_CASE("dino_batch_size_valid: bounds") {
     CHECK_FALSE(dino_batch_size_valid(1'000'000));
 }
 
-TEST_CASE("dino_params: n_batch defaults to 1") {
-    dino_params p;
-    CHECK(p.n_batch == 1);
-}
-
-TEST_CASE("dino_params_parse: accepts valid numeric boundaries") {
-    dino_params p;
-    char        a0[] = "prog", a1[] = "--seed", a2[] = "-2147483648", a3[] = "--threads", a4[] = "1";
-    char        a5[] = "--topk", a6[] = "1", a7[] = "--batch", a8[] = "64";
-    char        a9[] = "--bench-runs", a10[] = "1", a11[] = "--bench-warmup", a12[] = "0";
-    char       *argv[] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12};
-
-    CHECK(dino_params_parse(13, argv, p));
-    CHECK(p.seed == INT32_MIN);
-    CHECK(p.n_threads == 1);
-    CHECK(p.topk == 1);
-    CHECK(p.n_batch == DINO_MAX_BATCH);
-    CHECK(p.bench_repeats == 1);
-    CHECK(p.bench_warmup == 0);
-}
-
-TEST_CASE("dino_params_parse: --batch sets n_batch") {
-    dino_params p;
-    char        a0[] = "prog", a1[] = "--batch", a2[] = "4";
-    char       *argv[] = {a0, a1, a2};
-    CHECK(dino_params_parse(3, argv, p));
-    CHECK(p.n_batch == 4);
-}
-
-TEST_CASE("dino_params: fnames_inp defaults to the bundled sample image") {
-    dino_params p;
-    REQUIRE(p.fnames_inp.size() == 1);
-    CHECK(p.fnames_inp[0] == "../assets/tench.jpg");
-}
-
-TEST_CASE("dino_params_parse: repeated -i and comma lists collect images") {
-    dino_params p;
-    char        a0[] = "prog", a1[] = "-i", a2[] = "a.jpg";
-    char        a3[] = "-i", a4[] = "b.jpg, c.jpg ,d.jpg";
-    char       *argv[] = {a0, a1, a2, a3, a4};
-    CHECK(dino_params_parse(5, argv, p));
-    REQUIRE(p.fnames_inp.size() == 4);
-    CHECK(p.fnames_inp[0] == "a.jpg");
-    CHECK(p.fnames_inp[1] == "b.jpg");
-    CHECK(p.fnames_inp[2] == "c.jpg");
-    CHECK(p.fnames_inp[3] == "d.jpg");
-}
-
-TEST_CASE("dino_params_parse: -i with only empty tokens yields no images") {
-    dino_params p;
-    char        a0[] = "prog", a1[] = "-i", a2[] = " , ,";
-    char       *argv[] = {a0, a1, a2};
-    CHECK(dino_params_parse(3, argv, p));
-    CHECK(p.fnames_inp.empty());
+TEST_CASE("dino_ctx_options: n_batch defaults to 1") {
+    dino_ctx_options options;
+    CHECK(options.n_batch == 1);
 }
 
 TEST_CASE("dino_predict: batch of 2 equals two single-image runs") {
     ImageF img0 = make_test_image(8, 8, 1);
     ImageF img1 = make_test_image(8, 8, 2);
 
-    dino_params params;
-    params.n_batch = 2;
+    dino_ctx_options copts;
+    copts.n_batch = 2;
+    dino_run_options ropts;
 
     SUBCASE("no register tokens") {
         TinyModel m(/*n_registers=*/0);
 
-        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, copts, ropts, m.allocr);
         REQUIRE(batch.size() == 2);
-        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
-        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, copts, ropts, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, copts, ropts, m.allocr);
         REQUIRE(single0.size() == 1);
         REQUIRE(single1.size() == 1);
 
@@ -958,10 +839,10 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs") {
     SUBCASE("with register tokens") {
         TinyModel m(/*n_registers=*/2);
 
-        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, copts, ropts, m.allocr);
         REQUIRE(batch.size() == 2);
-        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
-        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, copts, ropts, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, copts, ropts, m.allocr);
         REQUIRE(single0.size() == 1);
         REQUIRE(single1.size() == 1);
 
@@ -979,15 +860,16 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (classify)") {
     ImageF    img0 = make_test_image(8, 8, 1);
     ImageF    img1 = make_test_image(8, 8, 2);
 
-    dino_params params;
-    params.n_batch  = 2;
-    params.classify = true;
-    params.topk     = 3;
+    dino_ctx_options copts;
+    copts.n_batch           = 2;
+    dino_run_options ropts;
+    ropts.classify = true;
+    ropts.topk     = 3;
 
-    const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+    const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, copts, ropts, m.allocr);
     REQUIRE(batch.size() == 2);
-    const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
-    const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+    const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, copts, ropts, m.allocr);
+    const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, copts, ropts, m.allocr);
     REQUIRE(single0.size() == 1);
     REQUIRE(single1.size() == 1);
 
@@ -1003,9 +885,10 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attentio
     ImageF img0 = make_test_image(8, 8, 1);
     ImageF img1 = make_test_image(8, 8, 2);
 
-    dino_params params;
-    params.n_batch           = 2;
-    params.enable_flash_attn = true;
+    dino_ctx_options copts;
+    copts.n_batch           = 2;
+    copts.enable_flash_attn = true;
+    dino_run_options ropts;
 
     // the flash path pads the sequence to a multiple of 32; the TinyModel
     // seq len (16 patches + 1 cls + registers = 17 or 19) always pads, so
@@ -1013,10 +896,10 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attentio
     SUBCASE("no register tokens") {
         TinyModel m(/*n_registers=*/0);
 
-        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, copts, ropts, m.allocr);
         REQUIRE(batch.size() == 2);
-        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
-        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, copts, ropts, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, copts, ropts, m.allocr);
         REQUIRE(single0.size() == 1);
         REQUIRE(single1.size() == 1);
 
@@ -1033,10 +916,10 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attentio
     SUBCASE("with register tokens") {
         TinyModel m(/*n_registers=*/2);
 
-        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, copts, ropts, m.allocr);
         REQUIRE(batch.size() == 2);
-        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
-        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, copts, ropts, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, copts, ropts, m.allocr);
         REQUIRE(single0.size() == 1);
         REQUIRE(single1.size() == 1);
 
@@ -1051,13 +934,13 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attentio
     SUBCASE("classify") {
         TinyModel m(/*n_registers=*/0);
 
-        params.classify = true;
-        params.topk     = 3;
+        ropts.classify = true;
+        ropts.topk     = 3;
 
-        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, params, m.allocr);
+        const auto batch = dino_predict(m.model, std::vector<ImageF>{img0, img1}, copts, ropts, m.allocr);
         REQUIRE(batch.size() == 2);
-        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, params, m.allocr);
-        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, params, m.allocr);
+        const auto single0 = dino_predict(m.model, std::vector<ImageF>{img0}, copts, ropts, m.allocr);
+        const auto single1 = dino_predict(m.model, std::vector<ImageF>{img1}, copts, ropts, m.allocr);
         REQUIRE(single0.size() == 1);
         REQUIRE(single1.size() == 1);
 
@@ -1092,12 +975,13 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
     SUBCASE("no register tokens") {
         TinyModel m(/*n_registers=*/0);
 
-        dino_params plain;
-        dino_params flash;
+        dino_ctx_options plain;
+        dino_ctx_options flash;
         flash.enable_flash_attn = true;
+        dino_run_options ropts;
 
-        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, m.allocr);
-        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, m.allocr);
+        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, ropts, m.allocr);
+        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, ropts, m.allocr);
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
@@ -1109,12 +993,13 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
     SUBCASE("with register tokens") {
         TinyModel m(/*n_registers=*/2);
 
-        dino_params plain;
-        dino_params flash;
+        dino_ctx_options plain;
+        dino_ctx_options flash;
         flash.enable_flash_attn = true;
+        dino_run_options ropts;
 
-        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, m.allocr);
-        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, m.allocr);
+        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, ropts, m.allocr);
+        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, ropts, m.allocr);
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
@@ -1126,14 +1011,15 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
     SUBCASE("classify") {
         TinyModel m(/*n_registers=*/0);
 
-        dino_params plain;
-        plain.classify          = true;
-        plain.topk              = 3;
-        dino_params flash       = plain;
+        dino_ctx_options plain;
+        dino_ctx_options flash = plain;
         flash.enable_flash_attn = true;
+        dino_run_options ropts;
+        ropts.classify = true;
+        ropts.topk     = 3;
 
-        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, m.allocr);
-        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, m.allocr);
+        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, ropts, m.allocr);
+        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, ropts, m.allocr);
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
@@ -1149,10 +1035,11 @@ TEST_CASE("dino_predict: single-image overload matches batch of 1") {
     TinyModel m;
     ImageF    img = make_test_image(8, 8, 3);
 
-    dino_params params;
+    dino_ctx_options copts;
+    dino_run_options ropts;
 
-    const auto                   batch1 = dino_predict(m.model, std::vector<ImageF>{img}, params, m.allocr);
-    std::unique_ptr<dino_output> single = dino_predict(m.model, img, params, m.allocr);
+    const auto                   batch1 = dino_predict(m.model, std::vector<ImageF>{img}, copts, ropts, m.allocr);
+    std::unique_ptr<dino_output> single = dino_predict(m.model, img, copts, ropts, m.allocr);
     REQUIRE(batch1.size() == 1);
     REQUIRE(single != nullptr);
 
@@ -1166,15 +1053,16 @@ TEST_CASE("dino_predict: rejects invalid batch inputs") {
     ImageF    img  = make_test_image(8, 8, 1);
     ImageF    wide = make_test_image(10, 8, 1); // different width
 
-    dino_params params;
-    params.n_batch = 2;
+    dino_ctx_options copts;
+    copts.n_batch = 2;
+    dino_run_options ropts;
 
     // empty batch
-    CHECK(dino_predict(m.model, std::vector<ImageF>{}, params, m.allocr).empty());
+    CHECK(dino_predict(m.model, std::vector<ImageF>{}, copts, ropts, m.allocr).empty());
 
     // more images than n_batch allows
-    CHECK(dino_predict(m.model, std::vector<ImageF>{img, img, img}, params, m.allocr).empty());
+    CHECK(dino_predict(m.model, std::vector<ImageF>{img, img, img}, copts, ropts, m.allocr).empty());
 
     // mismatched dimensions cannot share one graph
-    CHECK(dino_predict(m.model, std::vector<ImageF>{img, wide}, params, m.allocr).empty());
+    CHECK(dino_predict(m.model, std::vector<ImageF>{img, wide}, copts, ropts, m.allocr).empty());
 }

@@ -15,10 +15,12 @@
 #include <algorithm>
 #include <cassert>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -31,6 +33,394 @@
 #if defined(_MSC_VER)
 #pragma warning(disable : 4244 4267) // possible loss of data
 #endif
+
+#ifndef DINOV2_VERSION
+#define DINOV2_VERSION "dev"
+#endif
+
+// CLI-only parameters: everything that is not part of the engine's
+// model/ctx/run options (I/O paths, output modes, bench controls).
+struct dino_cli_params {
+    dino_model_options         model_opts;
+    dino_ctx_options           ctx_opts;
+    dino_run_options           run_opts;
+    int32_t                    seed               = 42; // unused: no RNG in inference; kept for CLI compatibility
+    bool                       print_embeddings   = false; // emit embeddings JSON on stdout (JSONL)
+    bool                       embeddings_binary  = false; // write preview binary embeddings to -o
+    bool                       print_patch_tokens = false; // include per-patch embeddings in the output
+    std::string                model              = "../model.gguf";
+    // input image paths; -i repeats or comma-separates to add more than one.
+    // Images are forwarded to the encoder in chunks of ctx_opts.n_batch.
+    std::vector<std::string>   fnames_inp = {"../assets/tench.jpg"};
+    std::string                image_out  = ""; // output of pca visualization (if used; a directory for multi-input)
+    // Benchmark controls. bench_repeats=0 disables the bench loop (legacy single-shot path).
+    // --bench with no count sets bench_repeats to 5 (the default for one-shot "is it faster").
+    uint32_t bench_repeats = 0;
+    uint32_t bench_warmup  = 1;
+    bool     bench_json    = false;
+};
+
+// Write the intentionally unstable version-2 D2EMB preview format.
+// grid_w/grid_h are the patch-grid dimensions (zero when patches are absent).
+// The vectors are expected to already have the requested normalization applied.
+static bool write_embeddings_binary(const std::string &path, const dino_output &output, uint32_t hidden_size,
+                                    uint32_t patch_count, uint32_t grid_w, uint32_t grid_h, bool include_patches,
+                                    bool normalized, std::string &error) {
+    if (!output.cls_token || output.cls_token->size() != hidden_size) {
+        error = "CLS vector has an unexpected length";
+        return false;
+    }
+    if (!output.pooled || output.pooled->size() != static_cast<size_t>(2) * hidden_size) {
+        error = "pooled vector has an unexpected length";
+        return false;
+    }
+    if (include_patches &&
+        (!output.patch_tokens || output.patch_tokens->size() != static_cast<size_t>(patch_count) * hidden_size)) {
+        error = "patch vectors have an unexpected length";
+        return false;
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        error = "cannot open output file";
+        return false;
+    }
+
+    const uint32_t flags     = (include_patches ? 1u : 0u) | (normalized ? 2u : 0u);
+    auto           write_u16 = [&](uint16_t value) {
+        const unsigned char bytes[2] = {static_cast<unsigned char>(value & 0xffu),
+                                        static_cast<unsigned char>((value >> 8) & 0xffu)};
+        file.write(reinterpret_cast<const char *>(bytes), sizeof(bytes));
+    };
+    auto write_u32 = [&](uint32_t value) {
+        const unsigned char bytes[4] = {
+            static_cast<unsigned char>(value & 0xffu), static_cast<unsigned char>((value >> 8) & 0xffu),
+            static_cast<unsigned char>((value >> 16) & 0xffu), static_cast<unsigned char>((value >> 24) & 0xffu)};
+        file.write(reinterpret_cast<const char *>(bytes), sizeof(bytes));
+    };
+    auto write_float = [&](float value) {
+        uint32_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(value));
+        std::memcpy(&bits, &value, sizeof(bits));
+        write_u32(bits);
+    };
+
+    const char magic[8] = {'D', '2', 'E', 'M', 'B', '\0', '\0', '\0'};
+    file.write(magic, sizeof(magic));
+    write_u16(2);
+    write_u16(40);
+    write_u32(hidden_size);
+    write_u32(2 * hidden_size);
+    write_u32(include_patches ? patch_count : 0);
+    write_u32(flags);
+    write_u32(0);
+    write_u32(include_patches ? grid_w : 0);
+    write_u32(include_patches ? grid_h : 0);
+
+    for (float value : *output.cls_token) {
+        write_float(value);
+    }
+    for (float value : *output.pooled) {
+        write_float(value);
+    }
+    if (include_patches) {
+        for (float value : *output.patch_tokens) {
+            write_float(value);
+        }
+    }
+
+    if (!file) {
+        error = "write failed";
+        return false;
+    }
+    file.flush();
+    if (!file) {
+        error = "flush failed";
+        return false;
+    }
+    file.close();
+    if (!file) {
+        error = "close failed";
+        return false;
+    }
+    return true;
+}
+
+static void print_usage(FILE *out, int argc, char **argv, const dino_cli_params &params) {
+    fprintf(out, "usage: %s [options]\n", argv[0]);
+    fprintf(out, "\n");
+    fprintf(out, "Model:\n");
+    fprintf(out, "  -m FNAME, --model     model path (default: %s)\n", params.model.c_str());
+    fprintf(out, "  -fa, --flash_attn     enable flash attention, less accurate (default: off)\n");
+    fprintf(out, "  -t N, --threads       number of threads to use during computation, 1 or greater (default: %u)\n",
+            params.ctx_opts.n_threads);
+    fprintf(out, "\n");
+    fprintf(out, "Input:\n");
+    fprintf(out, "  -i FNAME, --inp       input image file; repeat or comma-separate for several\n");
+    fprintf(out, "                        (default: %s)\n",
+            params.fnames_inp.empty() ? "" : params.fnames_inp.front().c_str());
+    fprintf(out, "  -s N, --seed          accepted for compatibility; has no effect (default: %d)\n", params.seed);
+    fprintf(out, "  --batch N             max images per forward pass; inputs run in chunks of N\n");
+    fprintf(out, "                        (default: %u, max: %u)\n", params.ctx_opts.n_batch, DINO_MAX_BATCH);
+    fprintf(out, "\n");
+    fprintf(out, "Preprocessing (feature mode only; rejected with -c):\n");
+    fprintf(out, "  --preprocess MODE     bounded (default): resize shortest edge to %d when larger;\n",
+            DINO_FEATURE_SHORT_EDGE);
+    fprintf(out, "                        hf: shortest edge 256 + center crop 224 (HF recipe);\n");
+    fprintf(out, "                        crop518: shortest edge 518 + center crop 518 (fixed 37x37 grid)\n");
+    fprintf(out, "  --no-resize           bounded mode: keep native resolution (still capped)\n");
+    fprintf(out, "  --max-tokens N        hard cap on patch tokens per image, 0 disables\n");
+    fprintf(out, "                        (default: 4 * (%d/patch)^2 from the model's patch size)\n",
+            DINO_FEATURE_SHORT_EDGE);
+    fprintf(out, "\n");
+    fprintf(out, "Output modes:\n");
+    fprintf(out, "  -c, --classify        classify each input image and print top-k labels (default: off)\n");
+    fprintf(out, "  -k N, --topk          top k classes to print, 1 through model class count (default: %u)\n",
+            params.run_opts.topk);
+    fprintf(out, "  --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)\n");
+    fprintf(out, "  --embeddings-binary   write preview binary embeddings to -o (unstable format)\n");
+    fprintf(out, "  --print-patch-tokens  include per-patch token vectors in the embedding output\n");
+    fprintf(out, "  --l2-normalize        L2-normalize emitted embedding vectors\n");
+    fprintf(out, "  -o FNAME, --out       write PCA output to FNAME, or binary embeddings file/directory\n");
+    fprintf(out, "                        output when used with --embeddings-binary\n");
+    fprintf(out, "\n");
+    fprintf(out, "Benchmark:\n");
+    fprintf(out, "  --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output\n");
+    fprintf(out,
+            "  --bench-runs N        number of timed runs, 1 or greater (overrides default 5 when --bench is set)\n");
+    fprintf(out, "  --bench-warmup N      number of warmup runs, 0 or greater (default: %u)\n", params.bench_warmup);
+    fprintf(out, "  --bench-json          emit one JSON object per line to stdout instead of markdown row\n");
+    fprintf(out, "\n");
+    fprintf(out, "Misc:\n");
+    fprintf(out, "  -h, --help            show this help message and exit\n");
+    fprintf(out, "  --version             print version and exit\n");
+    fprintf(out, "\n");
+    fprintf(out, "Workflows:\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg -c                        # classify: top-k labels\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --print-embeddings        # embeddings JSON on stdout\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --print-embeddings --print-patch-tokens\n");
+    fprintf(out, "                                                                # + per-patch tokens\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i a.jpg -i b.jpg --batch 2 --print-embeddings\n");
+    fprintf(out, "                                                                # batch: one JSON line per image\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg -o pca.png                # PCA viz of patch features\n");
+    fprintf(out, "  dinov2-cli -m model.gguf -i img.jpg --bench --bench-json      # benchmark, JSON lines\n");
+    fprintf(out, "\n");
+    fprintf(out, "docs: https://raw.githubusercontent.com/espetro/dinov2.cpp/main/docs/cli.md\n");
+}
+
+// Append a comma-separated list of paths to out; tokens are whitespace-trimmed
+// and empty tokens are dropped (same convention as parity_check.py's --image).
+static void append_csv_paths(std::vector<std::string> &out, const std::string &value) {
+    size_t pos = 0;
+    while (pos <= value.size()) {
+        const size_t      comma = value.find(',', pos);
+        const std::string tok   = value.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+        const size_t      first = tok.find_first_not_of(" \t\r\n");
+        const size_t      last  = tok.find_last_not_of(" \t\r\n");
+        if (first != std::string::npos) {
+            out.push_back(tok.substr(first, last - first + 1));
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        pos = comma + 1;
+    }
+}
+
+template <typename T> static bool parse_integer(const char *value, T &result) {
+    const char *first = value;
+    if (*first == '+') {
+        ++first;
+        if (*first == '+' || *first == '-') {
+            return false;
+        }
+    } else if (*first == '-' && (first[1] == '+' || first[1] == '-')) {
+        return false;
+    }
+    if (*first == '\0') {
+        return false;
+    }
+
+    const char *last = value + std::strlen(value);
+    T           parsed{};
+    const auto  conversion = std::from_chars(first, last, parsed, 10);
+    if (conversion.ec != std::errc() || conversion.ptr != last) {
+        return false;
+    }
+    result = parsed;
+    return true;
+}
+
+[[noreturn]] static void numeric_parse_error(const char *option, const char *value, const char *range, int argc,
+                                             char **argv, const dino_cli_params &params) {
+    fprintf(stderr, "error: %s has invalid value '%s' (expected %s)\n", option, value, range);
+    print_usage(stderr, argc, argv, params);
+    exit(1);
+}
+
+static bool dino_params_parse(int argc, char **argv, dino_cli_params &params) {
+    // consume argv[++i] as the value for a flag; a trailing flag with no
+    // value is a usage error, not a read past argv[argc - 1]
+    auto next_value = [&](int &i) -> const char * {
+        if (i + 1 >= argc) {
+            fprintf(stderr, "error: %s requires a value\n", argv[i]);
+            print_usage(stderr, argc, argv, params);
+            exit(1);
+        }
+        return argv[++i];
+    };
+
+    // the first -i replaces the default image; later -i flags append
+    bool first_inp      = true;
+    bool preprocess_set = false;
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+
+        if (arg == "-s" || arg == "--seed") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed)) {
+                numeric_parse_error(arg.c_str(), value, "a signed 32-bit integer", argc, argv, params);
+            }
+            params.seed = parsed;
+        } else if (arg == "-m" || arg == "--model") {
+            params.model = next_value(i);
+        } else if (arg == "-i" || arg == "--inp") {
+            if (first_inp) {
+                params.fnames_inp.clear();
+                first_inp = false;
+            }
+            append_csv_paths(params.fnames_inp, next_value(i));
+        } else if (arg == "--batch") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || !dino_batch_size_valid(parsed)) {
+                const std::string range = "an integer from 1 through " + std::to_string(DINO_MAX_BATCH);
+                numeric_parse_error(arg.c_str(), value, range.c_str(), argc, argv, params);
+            }
+            params.ctx_opts.n_batch = static_cast<uint32_t>(parsed);
+        } else if (arg == "-o" || arg == "--out") {
+            params.image_out = next_value(i);
+        } else if (arg == "-t" || arg == "--threads") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.ctx_opts.n_threads = static_cast<uint32_t>(parsed);
+        } else if (arg == "-k" || arg == "--topk") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.run_opts.topk = static_cast<uint32_t>(parsed);
+        } else if (arg == "-fa" || arg == "--flash_attn") {
+            params.ctx_opts.enable_flash_attn = true;
+        } else if (arg == "-c" || arg == "--classify") {
+            params.run_opts.classify             = true;
+            params.model_opts.require_classifier = true;
+        } else if (arg == "--bench") {
+            // --bench alone: enable bench loop with the default repeat count (5).
+            // --bench-runs N below overrides this if the user supplies a count.
+            if (params.bench_repeats == 0) {
+                params.bench_repeats = 5;
+            }
+        } else if (arg == "--bench-runs") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed <= 0) {
+                numeric_parse_error(arg.c_str(), value, "a positive 32-bit integer", argc, argv, params);
+            }
+            params.bench_repeats = static_cast<uint32_t>(parsed);
+        } else if (arg == "--bench-warmup") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed < 0) {
+                numeric_parse_error(arg.c_str(), value, "a non-negative 32-bit integer", argc, argv, params);
+            }
+            params.bench_warmup = static_cast<uint32_t>(parsed);
+        } else if (arg == "--bench-json") {
+            params.bench_json = true;
+        } else if (arg == "--print-embeddings") {
+            params.print_embeddings = true;
+        } else if (arg == "--embeddings-binary") {
+            params.embeddings_binary = true;
+        } else if (arg == "--print-patch-tokens") {
+            params.print_patch_tokens = true;
+        } else if (arg == "--l2-normalize") {
+            params.run_opts.l2_normalize = true;
+        } else if (arg == "--preprocess") {
+            const std::string value = next_value(i);
+            if (value == "bounded") {
+                params.ctx_opts.preprocess_mode = dino_preprocess_mode::bounded;
+            } else if (value == "hf") {
+                params.ctx_opts.preprocess_mode = dino_preprocess_mode::hf;
+            } else if (value == "crop518") {
+                params.ctx_opts.preprocess_mode = dino_preprocess_mode::crop518;
+            } else {
+                fprintf(stderr, "error: %s has invalid value '%s' (expected one of: bounded, hf, crop518)\n",
+                        arg.c_str(), value.c_str());
+                print_usage(stderr, argc, argv, params);
+                exit(1);
+            }
+            preprocess_set = true;
+        } else if (arg == "--no-resize") {
+            params.ctx_opts.no_resize = true;
+        } else if (arg == "--max-tokens") {
+            const char *value = next_value(i);
+            int32_t     parsed;
+            if (!parse_integer(value, parsed) || parsed < 0) {
+                numeric_parse_error(arg.c_str(), value, "a non-negative 32-bit integer", argc, argv, params);
+            }
+            params.ctx_opts.max_tokens = parsed;
+        } else if (arg == "--version") {
+            fprintf(stdout, "dinov2-cli %s\n", DINOV2_VERSION);
+            exit(0);
+        } else if (arg == "-h" || arg == "--help") {
+            print_usage(stdout, argc, argv, params);
+            exit(0);
+        } else {
+            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            print_usage(stderr, argc, argv, params);
+            exit(1);
+        }
+    }
+
+    if (params.embeddings_binary && params.image_out.empty()) {
+        fprintf(stderr, "error: --embeddings-binary requires -o PATH\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.embeddings_binary && params.run_opts.classify) {
+        fprintf(stderr, "error: --embeddings-binary cannot be combined with --classify\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.embeddings_binary && params.bench_repeats != 0) {
+        fprintf(stderr, "error: --embeddings-binary cannot be combined with --bench\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.ctx_opts.no_resize && params.ctx_opts.preprocess_mode != dino_preprocess_mode::bounded) {
+        fprintf(stderr, "error: --no-resize only applies to --preprocess bounded\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.run_opts.classify && !params.image_out.empty()) {
+        fprintf(stderr, "error: -o/--out writes feature-mode output (PCA or binary) and cannot be combined with -c\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+    if (params.run_opts.classify && (preprocess_set || params.ctx_opts.no_resize)) {
+        fprintf(stderr, "error: --preprocess/--no-resize are feature-mode flags and cannot be combined with -c\n");
+        print_usage(stderr, argc, argv, params);
+        exit(1);
+    }
+
+    return true;
+}
 
 // Extract a short model label from a GGUF path: e.g. "models/dinov2-vit-base-patch14/model.f16.gguf"
 // -> "dinov2-vit-base-patch14". Falls back to the full path if nothing matches.
@@ -110,7 +500,7 @@ static std::string binary_out_path(const std::string &out_path, const std::strin
 // cls (both modes), pooled (feature mode), topk (classify mode),
 // patches (feature mode + --print-patch-tokens). With multiple inputs the
 // caller prints one such line per image (JSONL).
-static void print_embeddings_json(const dino_params &params, const dino_model &model, const ImageF &img_f, size_t index,
+static void print_embeddings_json(const dino_cli_params &params, const dino_model &model, const ImageF &img_f, size_t index,
                                   const std::string &image_path, const dino_output &output) {
     const int grid_w    = img_f.nx / model.hparams.patch_size;
     const int grid_h    = img_f.ny / model.hparams.patch_size;
@@ -130,7 +520,7 @@ static void print_embeddings_json(const dino_params &params, const dino_model &m
         print_float_array(*output.pooled);
         fprintf(stdout, "]");
     }
-    if (params.classify && output.preds) {
+    if (params.run_opts.classify && output.preds) {
         fprintf(stdout, ",\"topk\":[");
         for (size_t i = 0; i < output.preds->size(); ++i) {
             if (i > 0) {
@@ -155,7 +545,7 @@ static void print_embeddings_json(const dino_params &params, const dino_model &m
 // main function
 int main(int argc, char **argv) {
     ggml_time_init();
-    dino_params params;
+    dino_cli_params params;
     dino_model  model;
 
     if (dino_params_parse(argc, argv, params) == false) {
@@ -175,7 +565,7 @@ int main(int argc, char **argv) {
     }
 
     // nothing-to-do guard: no output mode selected
-    if (!params.classify && !params.print_embeddings && !params.embeddings_binary && params.image_out.empty() &&
+    if (!params.run_opts.classify && !params.print_embeddings && !params.embeddings_binary && params.image_out.empty() &&
         params.bench_repeats == 0) {
         fprintf(stderr,
                 "%s: nothing to do: no output mode selected; choose one of:\n"
@@ -190,7 +580,6 @@ int main(int argc, char **argv) {
     // load every input image
     std::vector<Image> imgs;
     imgs.reserve(params.fnames_inp.size());
-    ImgSize max_img_size{0, 0};
     for (const std::string &path : params.fnames_inp) {
         Image img = load_image(path);
         if (img.data.empty()) {
@@ -198,13 +587,11 @@ int main(int argc, char **argv) {
             return 1;
         }
         fprintf(stderr, "%s: loaded image '%s' (%d x %d)\n", __func__, path.c_str(), img.nx, img.ny);
-        max_img_size.width  = std::max(max_img_size.width, img.nx);
-        max_img_size.height = std::max(max_img_size.height, img.ny);
         imgs.push_back(std::move(img));
     }
 
     // load the model
-    if (!dino_model_load(max_img_size, params.model, model, params)) {
+    if (!dino_model_load(params.model, model, params.model_opts)) {
         fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
         fprintf(stderr,
                 "%s: hint: download a model with:\n"
@@ -213,35 +600,29 @@ int main(int argc, char **argv) {
                 __func__);
         return 1;
     }
-    if (params.classify && params.topk > model.hparams.num_classes) {
-        fprintf(stderr, "%s: --topk (%u) cannot exceed the model's %u classes\n", __func__, params.topk,
+    if (params.run_opts.classify && params.run_opts.topk > model.hparams.num_classes) {
+        fprintf(stderr, "%s: --topk (%u) cannot exceed the model's %u classes\n", __func__, params.run_opts.topk,
                 model.hparams.num_classes);
-        ggml_free(model.ctx);
-        ggml_backend_buffer_free(model.buffer);
-        ggml_backend_free(model.backend);
+        dino_model_unload(model);
         return 1;
     }
 
     // error paths after this point must release the model (the Metal backend
     // aborts at process exit if its buffers were never freed)
-    auto free_model = [&]() {
-        ggml_free(model.ctx);
-        ggml_backend_buffer_free(model.buffer);
-        ggml_backend_free(model.backend);
-    };
+    auto free_model = [&]() { dino_model_unload(model); };
 
     // preprocess every input; classify mode always yields 224x224 crops
     std::vector<ImageF> imgs_f;
     imgs_f.reserve(imgs.size());
     const int64_t token_limit =
-        params.max_tokens >= 0 ? params.max_tokens : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
+        params.ctx_opts.max_tokens >= 0 ? params.ctx_opts.max_tokens : (int64_t)dino_default_max_tokens(model.hparams.patch_size);
     for (size_t i = 0; i < imgs.size(); ++i) {
         const Image &img = imgs[i];
         // hard cap on patch tokens, applied on the prospective preprocessed
         // size so oversize inputs fail before the (expensive) resize and
         // before any graph is constructed
-        if (token_limit > 0 && !params.classify) {
-            const ImgSize out_size  = dino_feature_output_size(img, model.hparams, params);
+        if (token_limit > 0 && !params.run_opts.classify) {
+            const ImgSize out_size  = dino_feature_output_size(img, model.hparams, params.ctx_opts);
             const int64_t n_patches = (int64_t)(out_size.height / (int)model.hparams.patch_size) *
                                       (out_size.width / (int)model.hparams.patch_size);
             if (n_patches > token_limit) {
@@ -253,8 +634,8 @@ int main(int argc, char **argv) {
                 return 1;
             }
         }
-        ImageF img_f = params.classify ? dino_classify_preprocess(img, model.hparams)
-                                       : dino_feature_preprocess(img, model.hparams, params);
+        ImageF img_f = params.run_opts.classify ? dino_classify_preprocess(img, model.hparams)
+                                       : dino_feature_preprocess(img, model.hparams, params.ctx_opts);
         fprintf(stderr, "%s: preprocessed image '%s' (%d x %d)\n", __func__, params.fnames_inp[i].c_str(), img_f.nx,
                 img_f.ny);
         imgs_f.push_back(std::move(img_f));
@@ -263,8 +644,8 @@ int main(int argc, char **argv) {
 
     // one graph covers a whole chunk, so all images inside an n_batch-sized
     // chunk must share dimensions; different chunks may differ
-    for (size_t s = 0; s < imgs_f.size(); s += params.n_batch) {
-        const size_t e = std::min(s + (size_t)params.n_batch, imgs_f.size());
+    for (size_t s = 0; s < imgs_f.size(); s += params.ctx_opts.n_batch) {
+        const size_t e = std::min(s + (size_t)params.ctx_opts.n_batch, imgs_f.size());
         for (size_t i = s + 1; i < e; ++i) {
             if (imgs_f[i].nx != imgs_f[s].nx || imgs_f[i].ny != imgs_f[s].ny) {
                 fprintf(stderr,
@@ -281,7 +662,7 @@ int main(int argc, char **argv) {
 
     // With multiple inputs, -o names a directory for per-image PCA or binary files;
     // create it up front so a bad path fails before any compute.
-    if (params.fnames_inp.size() > 1 && !params.image_out.empty() && !params.classify && params.bench_repeats == 0) {
+    if (params.fnames_inp.size() > 1 && !params.image_out.empty() && !params.run_opts.classify && params.bench_repeats == 0) {
         std::error_code ec;
         std::filesystem::create_directories(params.image_out, ec);
         const bool output_is_directory = std::filesystem::is_directory(params.image_out, ec);
@@ -306,11 +687,11 @@ int main(int argc, char **argv) {
         if (params.bench_repeats == 0) {
             // Single-shot path: run the inputs through dino_predict in chunks
             // of n_batch and emit per-image outputs in input order.
-            for (size_t s = 0; s < imgs_f.size(); s += params.n_batch) {
-                const size_t              e       = std::min(s + (size_t)params.n_batch, imgs_f.size());
+            for (size_t s = 0; s < imgs_f.size(); s += params.ctx_opts.n_batch) {
+                const size_t              e       = std::min(s + (size_t)params.ctx_opts.n_batch, imgs_f.size());
                 const std::vector<ImageF> chunk   = {imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e};
                 const int64_t             t0      = ggml_time_ms();
-                std::vector<dino_output>  outputs = dino_predict(model, chunk, params, allocr);
+                std::vector<dino_output>  outputs = dino_predict(model, chunk, params.ctx_opts, params.run_opts, allocr);
                 ggml_backend_synchronize(model.backend);
                 const int64_t dt_ms = ggml_time_ms() - t0;
                 fprintf(stderr, "%s: graph computation took %lld ms\n", __func__, dt_ms);
@@ -338,7 +719,7 @@ int main(int argc, char **argv) {
                                                                            (imgs_f[idx].nx / model.hparams.patch_size)),
                                                      static_cast<uint32_t>(imgs_f[idx].nx / model.hparams.patch_size),
                                                      static_cast<uint32_t>(imgs_f[idx].ny / model.hparams.patch_size),
-                                                     params.print_patch_tokens, params.l2_normalize, error)) {
+                                                     params.print_patch_tokens, params.run_opts.l2_normalize, error)) {
                             fprintf(stderr, "%s: failed to write binary embeddings '%s': %s\n", __func__,
                                     out_path.c_str(), error.c_str());
                             ggml_gallocr_free(allocr);
@@ -346,7 +727,7 @@ int main(int argc, char **argv) {
                             return 1;
                         }
                         fprintf(stderr, "%s: wrote binary embeddings to '%s'\n", __func__, out_path.c_str());
-                    } else if (params.classify && output.preds) {
+                    } else if (params.run_opts.classify && output.preds) {
                         // multi-input: label each top-k block with its image path
                         if (params.fnames_inp.size() > 1) {
                             fprintf(stdout, "%s:\n", image_path.c_str());
@@ -361,7 +742,7 @@ int main(int argc, char **argv) {
                         fflush(stdout);
                     }
 
-                    if (!params.embeddings_binary && !params.classify && output.patch_tokens &&
+                    if (!params.embeddings_binary && !params.run_opts.classify && output.patch_tokens &&
                         !params.image_out.empty()) {
                         const std::string out_path   = params.fnames_inp.size() > 1
                                                            ? pca_out_path(params.image_out, image_path, idx)
@@ -380,18 +761,16 @@ int main(int argc, char **argv) {
                 }
             }
 
-            ggml_free(model.ctx);
             ggml_gallocr_free(allocr);
-            ggml_backend_buffer_free(model.buffer);
-            ggml_backend_free(model.backend);
+            dino_model_unload(model);
         } else {
             // Bench path: bench_warmup warmup runs (discarded), then bench_repeats timed runs.
             // Each run processes every input image in chunks of n_batch.
             // Peak RSS is sampled between iterations via getrusage(RUSAGE_SELF).
             // We intentionally skip the PCA visualization here -- --bench is for perf only.
             std::vector<std::vector<ImageF>> chunks;
-            for (size_t s = 0; s < imgs_f.size(); s += params.n_batch) {
-                const size_t e = std::min(s + (size_t)params.n_batch, imgs_f.size());
+            for (size_t s = 0; s < imgs_f.size(); s += params.ctx_opts.n_batch) {
+                const size_t e = std::min(s + (size_t)params.ctx_opts.n_batch, imgs_f.size());
                 chunks.emplace_back(imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e);
             }
 
@@ -404,7 +783,7 @@ int main(int argc, char **argv) {
             for (uint32_t i = 0; i < params.bench_warmup + params.bench_repeats; ++i) {
                 int64_t t0 = ggml_time_ms();
                 for (const std::vector<ImageF> &chunk : chunks) {
-                    if (dino_predict(model, chunk, params, allocr).empty()) {
+                    if (dino_predict(model, chunk, params.ctx_opts, params.run_opts, allocr).empty()) {
                         ggml_gallocr_free(allocr);
                         free_model();
                         return 1;
@@ -471,7 +850,7 @@ int main(int argc, char **argv) {
             if (params.bench_json) {
                 // One JSON object per line on stdout.
                 fprintf(stdout, "{\"model\":\"%s\",\"n_threads\":%u,\"n_repeats\":%u,\"n_warmup\":%u,\"samples_ms\":[",
-                        model_label.c_str(), params.n_threads, params.bench_repeats, params.bench_warmup);
+                        model_label.c_str(), params.ctx_opts.n_threads, params.bench_repeats, params.bench_warmup);
                 for (size_t i = 0; i < samples.size(); ++i) {
                     if (i > 0) {
                         fprintf(stdout, ",");
@@ -482,21 +861,19 @@ int main(int argc, char **argv) {
                         "],\"mean_ms\":%.1f,\"stddev_ms\":%.1f,\"min_ms\":%.0f,\"max_ms\":%.0f,"
                         "\"peak_rss_mb\":%.0f,\"n_images\":%zu,\"batch\":%u,\"ms_per_image\":%.1f,"
                         "\"images_per_sec\":%.1f}\n",
-                        mean, stddev, mn, mx, peak_rss_mb, imgs_f.size(), params.n_batch, ms_per_image, images_per_sec);
+                        mean, stddev, mn, mx, peak_rss_mb, imgs_f.size(), params.ctx_opts.n_batch, ms_per_image, images_per_sec);
                 fflush(stdout);
             } else {
                 fprintf(stderr,
                         "%s: bench(model=%s, n_repeats=%u, n_warmup=%u, n_threads=%u, n_images=%zu, batch=%u) "
                         "mean=%.1f ms stddev=%.1f ms min=%.0f ms max=%.0f ms peak_rss_mb=%.0f "
                         "ms_per_image=%.1f images_per_sec=%.1f\n",
-                        __func__, model_label.c_str(), params.bench_repeats, params.bench_warmup, params.n_threads,
-                        imgs_f.size(), params.n_batch, mean, stddev, mn, mx, peak_rss_mb, ms_per_image, images_per_sec);
+                        __func__, model_label.c_str(), params.bench_repeats, params.bench_warmup, params.ctx_opts.n_threads,
+                        imgs_f.size(), params.ctx_opts.n_batch, mean, stddev, mn, mx, peak_rss_mb, ms_per_image, images_per_sec);
             }
 
-            ggml_free(model.ctx);
             ggml_gallocr_free(allocr);
-            ggml_backend_buffer_free(model.buffer);
-            ggml_backend_free(model.backend);
+            dino_model_unload(model);
         }
     }
 
