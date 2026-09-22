@@ -146,6 +146,7 @@ For patch and dense feature workflows, the register-token variants are the recom
 - [docs/build.md](docs/build.md): per-device optimizations, quantization
 - [docs/benchmarks.md](docs/benchmarks.md): benchmarks against PyTorch, how to run your own
 - [docs/hf-publishing.md](docs/hf-publishing.md): how CI publishes GGUF weights to Hugging Face
+- [docs/wasm.md](docs/wasm.md): Emscripten/WebAssembly build and browser demo
 
 ## Why this fork
 
