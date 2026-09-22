@@ -1,0 +1,117 @@
+# Copy-paste visual regression gate for your own repo (tier-2 example).
+#
+# What it does: for every screenshot pair baseline/<name>.png vs
+# screenshots/<name>.png in *your* repository, it embeds both with
+# dinov2-cli (--preprocess crop518 --batch so every image lands on the same
+# 37x37 grid), computes cosine similarity of the `pooled` vectors, and fails
+# when any pair drops below THRESHOLD.
+#
+# How to use it in your repo:
+#   1. Commit reference screenshots under baseline/ and have your screenshot
+#      harness write the current run to screenshots/ (same filenames).
+#   2. Drop this file into .github/workflows/ and adjust SCREENSHOT_GLOB /
+#      THRESHOLD.
+#   3. No secrets needed: the dinov2.cpp release tarball and the GGUF weight
+#      are both public downloads.
+#
+# Why embeddings instead of pixels: pixel-perfect diffs flake on font
+# rendering and AA noise. A 0.98 cosine gate on DINOv2 pooled features
+# tolerates subpixel drift but still catches layout/content changes.
+name: visual-regression
+
+on:
+  pull_request:
+    paths: ["screenshots/**", "baseline/**", ".github/workflows/visual-regression.yml"]
+
+env:
+  THRESHOLD: "0.98"
+  MODEL_REPO: "dinov2-cpp-core/dinov2-small-gguf"
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dinov2-cli release binary
+        run: |
+          TAG=$(basename "$(curl -sIL -o /dev/null -w '%{url_effective}' \
+            https://github.com/espetro/dinov2.cpp/releases/latest)")
+          curl -LO "https://github.com/espetro/dinov2.cpp/releases/download/$TAG/dinov2-$TAG-bin-ubuntu-x64.tar.gz"
+          curl -LO "https://github.com/espetro/dinov2.cpp/releases/download/$TAG/SHA256SUMS.txt"
+
+      - name: Verify checksums and unpack
+        # grep the sums file down to our archive so `sha256sum -c` only checks it
+        run: |
+          TARBALL=$(ls dinov2-*-bin-ubuntu-x64.tar.gz)
+          grep " $TARBALL\$" SHA256SUMS.txt > check.sums
+          sha256sum -c check.sums
+          tar xzf "$TARBALL"
+          find . -name dinov2-cli -type f
+
+      - name: Download GGUF weight
+        run: |
+          mkdir -p models
+          curl -L -o models/model.gguf \
+            "https://huggingface.co/$MODEL_REPO/resolve/main/model.gguf"
+
+      - name: Embed baseline and PR screenshots
+        # crop518 pins every input to the same 518x518 canvas so unrelated
+        # screenshots never produce wildly different grids. --batch packs
+        # them into fewer forward passes.
+        run: |
+          CLI=$(find . -name dinov2-cli -type f | head -1)
+          mkdir -p emb
+          embed() {
+            args=()
+            while IFS= read -r f; do args+=(-i "$f"); done \
+              < <(find "$1" -maxdepth 1 \( -name '*.png' -o -name '*.jpg' \) | sort)
+            if [ "${#args[@]}" -eq 0 ]; then
+              echo "no images in $1/"; return 0
+            fi
+            "$CLI" -m models/model.gguf --preprocess crop518 --batch 8 \
+              --print-embeddings "${args[@]}" > "$2"
+          }
+          embed baseline emb/baseline.jsonl
+          embed screenshots emb/current.jsonl
+
+      - name: Compare embeddings (cosine >= THRESHOLD)
+        # stdlib-only; install nothing. Match records by basename so the
+        # -i ordering never matters.
+        run: |
+          python3 - <<'PY'
+          import json, math, os, sys
+
+          def load(path):
+              out = {}
+              for line in open(path):
+                  r = json.loads(line)
+                  out[os.path.basename(r["image"])] = r.get("pooled") or r["cls"]
+              return out
+
+          def cosine(a, b):
+              dot = sum(x * y for x, y in zip(a, b))
+              na = math.sqrt(sum(x * x for x in a))
+              nb = math.sqrt(sum(x * x for x in b))
+              return dot / (na * nb) if na and nb else 0.0
+
+          threshold = float(os.environ["THRESHOLD"])
+          base = load("emb/baseline.jsonl")
+          curr = load("emb/current.jsonl")
+          failed = []
+          for name, bvec in sorted(base.items()):
+              if name not in curr:
+                  print(f"MISSING  {name}: no current screenshot")
+                  failed.append(name)
+                  continue
+              s = cosine(bvec, curr[name])
+              print(f"{'ok' if s >= threshold else 'FAIL'}  {s:.4f}  {name}")
+              if s < threshold:
+                  failed.append(name)
+          for name in curr:
+              if name not in base:
+                  print(f"NEW      {name}: add to baseline/ if intentional")
+          if failed:
+              print(f"\n{len(failed)} screenshot(s) below {threshold}: {failed}")
+              sys.exit(1)
+          PY
