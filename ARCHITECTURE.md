@@ -3,10 +3,12 @@
 ## Goals
 
 `dinov2.cpp` is a from-scratch C++ port of Meta's DINOv2 vision encoder that runs on
-the [ggml](https://github.com/ggml-org/ggml) tensor library. It is **one CLI binary**
-(`dinov2-cli`) that loads any ggml-supported GGUF weight, decodes an image with
-vendored `stb_image`, runs the encoder graph, and prints classification
-predictions, embeddings JSON, or PCA-visualised patch features. It is **not** a Python wrapper, a
+the [ggml](https://github.com/ggml-org/ggml) tensor library. It ships **one CLI binary**
+(`dinov2-cli`) plus a reusable **library** (`libdinov2`) that loads any
+ggml-supported GGUF weight, decodes an image with vendored `stb_image`, runs
+the encoder graph, and prints classification predictions, embeddings JSON, or
+PCA-visualised patch features. The library exposes a pure C API
+(`include/dinov2.h`) for external consumers. It is **not** a Python wrapper, a
 training framework, a model converter, or a multi-backend serving system: those
 concerns live in adjacent repos (`dinov2-cpp-core` for GGUF conversion and HF
 distribution, `ggml` for backends).
@@ -14,18 +16,25 @@ distribution, `ggml` for backends).
 ## Layer model
 
 The dependency rule: source code dependencies point strictly **downward**. The
-CLI shell only includes the public header; the implementation includes ggml;
-ggml is a vendored submodule that includes nothing of ours.
+CLI shell and the C API wrapper both sit on top of the engine; the
+implementation includes ggml; ggml is a vendored submodule that includes
+nothing of ours. Engine files never include the public C header: only
+`src/dinov2-c.cpp` sees both worlds.
 
 ```mermaid
 graph TD
-    A["dinov2-cli (dinov2-cli.cpp)<br/>CLI shell: argv parsing, image load,<br/>graph build, output formatting"]
-    B["dinov2.h<br/>public API: structs, signatures,<br/>IMAGENET defaults"]
-    C["dinov2.cpp<br/>encoder graph:<br/>attn, mlp, swiglu_ffn, build_graph,<br/>dino_predict"]
-    D["src/image.h + src/image.cpp<br/>stb wrappers: load_image,<br/>dino_preprocess, dino_classify_preprocess,<br/>preprocess_resize_crop (bounded/hf/crop518)"]
-    E["ggml/ submodule<br/>tensor library + CPU backend"]
+    A["dinov2-cli (dinov2-cli.cpp)<br/>CLI shell: argv parsing, image load,<br/>output formatting, bench loop"]
+    P["include/dinov2.h<br/>public C API: opaque handles,<br/>params PODs, status codes"]
+    W["src/dinov2-c.cpp<br/>wrapper: RGB8 -> Image/ImageF,<br/>chunking, status mapping"]
+    B["src/dinov2-impl.h<br/>internal API: structs, options,<br/>IMAGENET defaults"]
+    C["dinov2.cpp<br/>engine: model load (file/buffer/callback),<br/>backend registry init, attn/mlp/swiglu_ffn,<br/>build_graph, dino_ctx + dino_predict"]
+    D["src/image.h + src/image.cpp<br/>stb wrappers: load_image,<br/>resize/normalize helpers,<br/>preprocess recipes (bounded/hf/crop518)"]
+    E["ggml/ submodule<br/>tensor library + backend registry"]
 
     A --> B
+    A --> D
+    W --> P
+    W --> B
     B --> C
     B --> D
     C --> E
@@ -36,13 +45,16 @@ graph TD
     classDef impl   fill:#e7f3dd,stroke:#575,color:#000;
     classDef vend   fill:#f0f0f0,stroke:#888,color:#000;
     class A cli
-    class B api
-    class C,D impl
+    class P,W api
+    class B,C,D impl
     class E vend
 ```
 
-Arrows never point upward. `dinov2-cli.cpp` does not include `ggml.h` directly;
-it talks to ggml only through the opaque struct types in `dinov2.h`.
+Arrows never point upward. `dinov2-cli.cpp` includes `ggml.h` only for timing
+and scheduler synchronisation; all tensor plumbing lives behind
+`src/dinov2-impl.h`. The internal C++ header is not installed; only `include/`
+is on the library's public include path, so a bare `#include "dinov2.h"`
+always resolves to the stable C API for embedders.
 
 ## File-by-file index (role groups)
 
@@ -59,10 +71,10 @@ graph LR
     classDef asset fill:#efe,stroke:#7a7,color:#000;
     classDef sub   fill:#f0f0f0,stroke:#888,color:#000;
 
-    Core["dinov2.h<br/>dinov2.cpp"]
+    Core["src/dinov2-impl.h<br/>dinov2.cpp<br/>include/dinov2.h<br/>src/dinov2-c.cpp"]
     Lib["src/image.h<br/>src/image.cpp"]
     CLI["dinov2-cli.cpp"]
-    Test["tests/test_image.cpp<br/>tests/test_dinov2.cpp"]
+    Test["tests/test_image.cpp<br/>tests/test_dinov2.cpp<br/>tests/test_dinov2_c.cpp<br/>tests/test_cli.cpp"]
     Tool["scripts/bench.sh<br/>scripts/dinov2-to-gguf.py<br/>scripts/publish-gguf.sh"]
     Build["CMakeLists.txt<br/>CMakePresets.json<br/>src/stb_image.h<br/>src/stb_image_write.h<br/>src/doctest.h"]
     CI[".github/workflows/release.yml<br/>.github/workflows/build.yml<br/>.github/workflows/convert-and-publish-gguf.yml"]
@@ -86,10 +98,12 @@ Abridged table:
 
 | Path | Role | One-line purpose |
 |:-----|:-----|:-----------------|
-| `dinov2.h`, `dinov2.cpp` | Core | Public API + encoder graph. |
-| `src/image.{h,cpp}` | Library | stb-backed image load + `dino_preprocess` / feature-mode `--preprocess` recipes (bounded 518 bound, hf, crop518). |
+| `include/dinov2.h` | Core | Public C API (opaque handles, status codes); the installed header. |
+| `src/dinov2-c.cpp` | Core | C API wrapper: param conversion, RGB8 packing, chunking, status mapping. |
+| `src/dinov2-impl.h`, `dinov2.cpp` | Core | Internal C++ API + encoder graph + model load + inference. |
+| `src/image.{h,cpp}` | Library | stb-backed image load + `dino_preprocess_padded` / feature-mode `--preprocess` recipes (bounded 518 bound, hf, crop518). |
 | `dinov2-cli.cpp` | CLI | `main`: arg parsing + bench loop. |
-| `tests/test_{image,dinov2}.cpp` | Test | doctest pure-function coverage. |
+| `tests/test_{image,dinov2,dinov2_c,cli}.cpp` | Test | doctest coverage + CLI black-box cases. |
 | `scripts/{bench.sh,dinov2-to-gguf.py,publish-gguf.sh}` | Tool | Bench sweep + PyTorch→GGUF + HF upload. |
 | `CMakeLists.txt`, `CMakePresets.json`, vendored stb/doctest | Build | CMake build + vendored single-file deps. |
 | `.github/workflows/*` | CI | 3 workflows: release, build, convert-and-publish. |
@@ -104,32 +118,47 @@ graph LR
     CLI["dinov2-cli.cpp"]
     LIB["dinov2.cpp"]
     IMG["src/image.cpp"]
+    CAPI["src/dinov2-c.cpp"]
     TST_IMG["tests/test_image.cpp"]
     TST_LIB["tests/test_dinov2.cpp"]
+    TST_C["tests/test_dinov2_c.cpp"]
+    TST_CLI["tests/test_cli.cpp"]
     GGML["ggml/ (add_subdirectory)"]
 
+    LIB_TGT["dinov2 (add_library;<br/>BUILD_SHARED_LIBS-aware)"]
     CLI_EXE["dinov2-cli (add_executable)"]
     TEST_IMG["test_image (add_executable)"]
     TEST_LIB["test_dinov2 (add_executable)"]
+    TEST_C["test_dinov2_c (add_executable)"]
+    TEST_CLI_EXE["test_cli (add_executable;<br/>drives dinov2-cli)"]
     CTEST["ctest"]
 
+    LIB --> LIB_TGT
+    IMG --> LIB_TGT
+    CAPI --> LIB_TGT
+    GGML --> LIB_TGT
     CLI --> CLI_EXE
-    LIB --> CLI_EXE
-    IMG --> CLI_EXE
-    LIB --> TEST_LIB
-    IMG --> TEST_LIB
+    LIB_TGT --> CLI_EXE
+    LIB_TGT --> TEST_LIB
     TST_LIB --> TEST_LIB
     IMG --> TEST_IMG
     TST_IMG --> TEST_IMG
-    GGML --> CLI_EXE
-    GGML --> TEST_LIB
+    LIB_TGT --> TEST_C
+    TST_C --> TEST_C
+    TST_CLI --> TEST_CLI_EXE
+    CLI_EXE --> TEST_CLI_EXE
     TEST_IMG --> CTEST
     TEST_LIB --> CTEST
+    TEST_C --> CTEST
+    TEST_CLI_EXE --> CTEST
 ```
 
-`test_image` and `test_dinov2` register themselves with `add_test(NAME …)`;
-`ctest --test-dir build` runs both. `dinov2-cli` is not a test (it needs a
-real GGUF + image that the test environment does not guarantee).
+`test_image`, `test_dinov2`, `test_dinov2_c`, and `test_cli` register
+themselves with `add_test(NAME …)`; `ctest --test-dir build` runs all four.
+`test_cli` spawns the built `dinov2-cli` binary with argument fixtures;
+`test_dinov2_c` exercises the public C API on synthetic GGUFs.
+`dinov2-cli` itself is not a test (a real GGUF + image are only guaranteed
+when `models/` is populated).
 
 ## CLI surface
 
@@ -197,41 +226,46 @@ Flow:
 flowchart TD
     start([argv]) --> parse["dino_params_parse"]
     parse --> load_img["load_image (stb)"]
-    load_img --> load_model["dino_model_load<br/>(gguf -> ggml tensors)"]
-    load_model --> alloc["ggml_gallocr_new"]
+    load_img --> load_model["dino_model_load<br/>(registry backend init +<br/>gguf -> ggml tensors)"]
+    load_model --> alloc["dino_ctx_init<br/>(ggml_backend_sched)"]
     alloc --> branch{--bench?}
     branch -- no --> single["chunked single-shot predict (n_batch per pass)<br/>+ JSONL / top-k / PCA outputs"]
     branch -- yes --> loop["warmup x N + bench x M<br/>each run covers all inputs<br/>emit JSON or stderr row"]
-    single --> cleanup["free ctx + buffer + backend"]
+    single --> cleanup["dino_ctx_free + dino_model_unload"]
     loop --> cleanup
     cleanup --> exit([return 0])
 ```
 
-Every flag maps to one `dino_params` field (`dinov2.h:84-111`).
+Every flag maps to one `dino_cli_params` field in `dinov2-cli.cpp` (engine
+options live in `dino_model_options` / `dino_ctx_options` /
+`dino_run_options`, embedded in the CLI params struct).
 `--print-embeddings` and `--bench-json` are the stable machine-readable
 outputs; `scripts/bench.sh` parses `--bench-json` lines one by one.
 
-## Public API surface
+## API surface
 
-Condensed from `dinov2.h` (`...` elides parameter lists and comments):
+Two headers, two audiences:
+
+- `include/dinov2.h` is the installed, pure-C API for external consumers:
+  opaque `dino_model` / `dino_ctx` handles, by-value `dino_model_params` /
+  `dino_ctx_params` / `dino_run_params` PODs with `*_default_params()`
+  functions, the load triad (`dino_model_load_from_file` / `_from_buffer` /
+  `_from_callback`), `dino_init_from_model`, batched `dino_encode` on raw
+  RGB8 images, and borrowed-pointer `dino_output_*` accessors. Failures come
+  back as `dino_status` codes, never aborts. Unstable for the 0.4.x line;
+  see `docs/stability.md`.
+- `src/dinov2-impl.h` is the internal C++ API shared by the engine, the CLI, the C
+  wrapper, and the tests. It is not installed. Condensed (`...` elides
+  parameter lists and comments):
 
 ```c++
 struct ImgSize { int width = 0; int height = 0; };
-
-constexpr float IMAGENET_DEFAULT_MEAN[3] = {0.485f, 0.456f, 0.406f};
-constexpr float IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
-
-uint32_t get_val_u32(const struct gguf_context *ctx, const char *key);
-const char *get_val_str(const struct gguf_context *ctx, const char *key);
-
-void l2_normalize(std::vector<float> &v);
 
 struct dino_hparams {
     uint32_t hidden_size = 768, num_hidden_layers = 12, num_attention_heads = 12;
     uint32_t num_classes = 1000, num_register_tokens = 0;
     uint32_t patch_size = 8, img_size = 224, ftype = 1;
-    float eps = 1e-6f; std::string interpolation = "bicubic";
-    std::map<int, std::string> id2label;
+    float eps = 1e-6f; std::map<int, std::string> id2label;
     uint32_t n_enc_head_dim() const, n_img_size() const,
               n_patch_size() const, n_img_embd() const;
 };
@@ -242,34 +276,24 @@ struct dino_model {
     ggml_backend_t backend       = nullptr;
     ggml_backend_buffer_t buffer = nullptr;
     std::map<std::string, struct ggml_tensor *> tensors;
+    bool has_classifier = false;
 };
 
-// --batch bound and feature-mode preprocessing knobs
-constexpr uint32_t DINO_MAX_BATCH = 64;
+// batch bound and feature-mode preprocessing knobs
+constexpr uint32_t dino_max_batch = 64;
 constexpr int DINO_FEATURE_SHORT_EDGE = 518;
 enum class dino_preprocess_mode { bounded, hf, crop518 };
 
-struct dino_params {
-    int32_t  seed = 42;             // unused: no RNG in inference; kept for API compatibility
-    uint32_t topk = 5;
-    uint32_t n_batch = 1;           // max images per forward pass (--batch)
-    bool enable_flash_attn = false;
-    uint32_t n_threads = std::min(4u, std::thread::hardware_concurrency());
-    bool classify = false;
-    bool print_embeddings = false;
-    bool embeddings_binary = false;
-    bool print_patch_tokens = false;
-    bool l2_normalize = false;
-    std::string model = "../model.gguf";
-    std::vector<std::string> fnames_inp = {"../assets/tench.jpg"};
-    std::string image_out = "";     // PCA/binary output is opt-in via -o
-    uint32_t bench_repeats = 0;     // --bench default: 5
-    uint32_t bench_warmup = 1;
-    bool bench_json = false;
-    dino_preprocess_mode preprocess_mode = dino_preprocess_mode::bounded;
-    bool no_resize = false;
-    int64_t max_tokens = -1;        // -1: default cap; 0 disables
-};
+// the dino_params god-object split into per-stage options
+struct dino_model_options { bool require_classifier = false; std::string device; };
+struct dino_ctx_options   { uint32_t n_threads, n_batch = 1;
+                            bool enable_flash_attn = false;
+                            dino_preprocess_mode preprocess_mode;
+                            bool no_resize = false; int64_t max_tokens = -1; };
+struct dino_run_options   { bool classify = false; uint32_t topk = 5;
+                            bool l2_normalize = false; };
+
+ggml_backend_t dino_backend_init(const char *device_name); // registry init
 
 // encoder graph
 struct ggml_tensor *attn(...), *mlp(...), *swiglu_ffn(...);
@@ -281,42 +305,54 @@ struct dino_output {
     std::optional<std::vector<float>>    cls_token;    // hidden_size floats (both modes)
     std::optional<std::vector<float>>    pooled;       // [cls || mean(patches)] (feature)
     std::optional<std::vector<float>>    patch_tokens; // n_patches x hidden (feature)
+    int32_t grid_w = 0, grid_h = 0;
 };
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
-ImageF dino_preprocess(const Image &img, const dino_hparams &params);
+ImageF dino_preprocess_padded(const Image &img, const dino_hparams &params);
 ImageF dino_feature_preprocess(const Image &img, const dino_hparams &hparams,
-                               const dino_params &params);
+                               const dino_ctx_options &options);
 ImgSize dino_feature_output_size(const Image &img, const dino_hparams &hparams,
-                                 const dino_params &params);
+                                 const dino_ctx_options &options);
 
-bool dino_model_load(ImgSize img_size, const std::string &fname,
-                     dino_model &model, const dino_params &params);
+// model load triad: file, in-memory buffer, streaming read callback
+bool dino_model_load(const std::string &fname, dino_model &model,
+                     const dino_model_options &options);
+bool dino_model_load_buffer(const void *data, size_t size, dino_model &model,
+                            const dino_model_options &options);
+bool dino_model_load_callback(dino_reader_fn read, void *userdata, dino_model &model,
+                              const dino_model_options &options);
+void dino_model_unload(dino_model &model);
 
-std::vector<float> interpolate_pos_embed(ImgSize img_size,
-                                         const float *pos_embed_data,
-                                         const dino_hparams &hparams);
+// inference context: owns the backend scheduler (and its graph allocator),
+// a borrowed model pointer, the ctx options, and the last run's outputs
+struct dino_ctx {
+    const dino_model *model = nullptr;
+    dino_ctx_options options;
+    ggml_backend_sched_t sched        = nullptr;
+    ggml_backend_t       cpu_fallback = nullptr; // only when backend is not CPU
+    std::vector<dino_output> last_outputs;
+    dino_errc last_status = dino_errc::ok;
+};
 
-struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph,
-                                const dino_model &model, const dino_params &params,
-                                size_t graph_size);
+bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_options &options);
+void dino_ctx_free(dino_ctx &ctx);
 
-// batch form: 1..n_batch same-dims images -> one output per image
-std::vector<dino_output> dino_predict(const dino_model &model,
-                                      const std::vector<ImageF> &imgs,
-                                      const dino_params &params, ggml_gallocr_t allocr);
-// single-image convenience wrapper around the batch form
-std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF &img,
-                                          const dino_params &params, ggml_gallocr_t allocr);
-
-void print_usage(FILE *out, int argc, char **argv, const dino_params &params);
-bool write_embeddings_binary(const std::string &path, const dino_output &output, ...);
-bool dino_params_parse(int argc, char **argv, dino_params &params);
+// batch form: 1..n_batch same-dims images -> one output per image, stored in
+// ctx.last_outputs; an empty vector + ctx.last_status signals failure
+const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx,
+                                             const std::vector<ImageF> &imgs,
+                                             const dino_run_options &run);
+const dino_output *dino_predict(const dino_model &model, dino_ctx &ctx,
+                                const ImageF &img, const dino_run_options &run);
 ```
 
-`dinov2.h` includes `ggml.h` and `src/image.h` so callers transitively pick up
-ggml's types and `Image` / `ImageF`. There are no `extern "C"` exports; this
-is C++, consumed by the CLI shell in the same translation-unit set.
+`src/dinov2-impl.h` includes `ggml.h`/`ggml-backend.h` and `src/image.h` so callers
+transitively pick up ggml's types and `Image` / `ImageF`. Per-encode work
+runs through `ctx.sched` (`ggml_backend_sched_reset` +
+`ggml_backend_sched_alloc_graph` + `ggml_backend_sched_graph_compute`), so
+the graph allocator and backend dispatch are owned by the context, not the
+caller.
 
 ## What ships per release
 
