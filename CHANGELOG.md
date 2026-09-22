@@ -16,33 +16,100 @@ marker; everything below is regenerated.
 ## [Unreleased]
 
 ### Changed
-- Feature-mode preprocessing now bounds the shortest edge to 518 px by
-  default (`--preprocess bounded`) and aligns dimensions by true ceil to
-  patch multiples (a dimension already at a multiple is unchanged).
-  `--no-resize` restores native resolution, still subject to
-  `--max-tokens`.
-- The embeddings JSON record gains `index` (0-based input order) and
-  `grid` (`{"h","w"}` patch-grid dims); `patches` stays flat row-major
-  `h*w*hidden`.
-- The D2EMB preview header is version 2, 40 bytes, adding `grid_w` and
-  `grid_h` fields. The format remains intentionally unstable.
-- Version bumped to 0.4.0 (`--version` reports `dinov2-cli 0.4.0`).
+- *(changelog)* Regenerate for v0.4.0
+## [0.4.0] - 2026-09-21
 
 ### Added
-- `--preprocess {bounded,hf,crop518}` feature-mode selector: `hf`
-  mirrors the HF AutoImageProcessor recipe (256 + 224 crop); `crop518`
-  gives a fixed 518x518 grid for batching mixed aspect ratios.
-- `--max-tokens N` hard cap on patch tokens per image (default
-  `4*(518/patch)^2`, 0 disables), enforced before graph construction.
-- `scripts/check_jsonl_contract.py`: stdlib validator for the JSONL
-  record contract.
+- Return cls, pooled, and score embeddings from dino_predict
+- Add output-mode, version, and help flags to CLI parsing
+- Emit embeddings JSON and restore top-k output in CLI
+- *(scripts)* Add parity check vs PyTorch reference
+- *(params)* Add n_batch and --batch flag with bounds checking
+- *(graph)* Batch-aware encoder graph in forward_features and attn
+- *(predict)* Multi-image dino_predict API
+- *(cli)* Accept multiple -i inputs and comma-separated image lists
+- *(cli)* Run multi-image inference in n_batch chunks
+- *(cli)* Report per-image throughput in bench output
+- *(cli)* Add preview binary embeddings output
+- Harden backbone-only DINOv2 loading
+- *(preprocess)* Bound feature mode with --preprocess, --no-resize, --max-tokens
+- *(cli)* Add index and grid to records, D2EMB v2 header
 
 ### Fixed
-- Graph and model buffer allocation failures now print a diagnostic and
-  exit 1 instead of aborting (e.g. the ~222 GB Metal request from a
-  3440x5601 feature-mode input).
+- Preserve aspect ratio in classify preprocess resize
+- Pool over actual patch-token count in classify head
+- Route dino_model_load logs to stderr
+- *(scripts)* Gate parity on patch flat+mean cosine, keep token min informational
+- *(dinov2)* Exclude register tokens from classify pooling
+- *(dinov2)* Bounds-check value flags in dino_params_parse
+- *(scripts)* Fail parity check on empty image list and CLI timeout
+- Add missing scale param to attn declaration
+- *(cli)* Address batched inference review findings
+- *(cli)* Enforce strict numeric parsing
+- *(cli)* Address Task 1 review nits
+- *(cli)* Address binary embeddings review findings
+- *(ci)* Use supported Hugging Face CLI
+- *(bench)* Parse benchmark JSON portably
+- Address final parity review findings
+- Support backbone-only DINOv2 conversion
+- *(converter)* Harden DINOv2 backbone resolution
+- Check ggml graph and model buffer allocation failures
 
+### Changed
+- *(readme)* Drop Topics section and topic-count badge
+- *(plans)* Point CUDA smoke-test step at the live HF slug
+- Apply clang-format-18 to bench path + bench flag declarations
+- Drop unused print_t_f32 debug helper
+- Cover classify preprocess aspect and l2_normalize
+- Ignore CMake preset build-* directories
+- Add cli.md reference and sync CLI docs with embeddings output
+- Complete --help blocks and fix model path in cli.md example
+- *(cli)* Fix build preset, threads default, and flag-table lead-in
+- Update agent memory for embeddings-dropin learnings
+- Batch inference coverage with synthetic tiny model
+- Cover flash-attention batch path in dino_predict
+- Document batch inference across CLI reference and guides
+- *(spec)* Define register-token recommendations
+- Recommend register-token models for feature workflows
+- Specify parity benchmark and binary preview
+- Add reproducible parity evidence
+- *(parity)* Clarify evidence provenance and downloads
+- *(bench)* Report blocked Ubuntu evidence run
+- Record Ubuntu benchmark rerun blocker
+- *(bench)* Record Ubuntu benchmark artifact
+- *(bench)* Preserve model provenance
+- *(bench)* Record current Ubuntu benchmark evidence
+- Harden backbone loader review coverage
+- *(bench)* Publish Ubuntu-only benchmark evidence
+- Refresh final parity evidence
+- Refresh final parity evidence
+- Fix regular GGUF checksum
+- *(spec)* Design large-image preprocessing bound and record contract
+- Bump project version to 0.4.0
+- *(spec)* Settle preprocess modes, true-ceil alignment, and record contract
+- *(preprocess)* Single resample to bounded target dims, true-ceil ctx sizing
+- Record contract, preprocess modes, D2EMB v2
+- *(parity)* Record measured hf-mode residual for tench
+- *(parity)* Record rerun code state and CLI 0.4.0
+
+### Miscellaneous
+- Add project-scoped mise.toml for clang-format-18 + git-cliff
+- Define DINOV2_VERSION from project version
+- Add cmake buildPresets so --preset build works
+- Merge pull request #10 from espetro/feat/embeddings-dropin
+- Merge pull request #11 from espetro/feat/batched-inference
+- Merge pull request #12 from espetro/feat/batched-inference
+- Merge pull request #13 from espetro/feat/batched-inference
+- Merge pull request #14 from espetro/fix/large-image-preprocessing
 ## [0.3.0] - 2026-09-18
+
+### Fixed
+- *(cli)* Guard sys/resource.h and getrusage behind POSIX; use GetProcessMemoryInfo on Windows
+- *(ci)* Drop hallucinated git-cliff --tag flag from changelog PR body
+- *(ci)* Install libblake3 alongside ccache on macos arm64
+- *(ci)* Install blake3 (not libblake3) on macos
+- *(ci)* Flip push-to-fork polarity in changelog PR opener
+- *(ci)* Drop push-to-fork entirely from changelog PR opener
 
 ### Changed
 - *(plan)* Post-v0.2.0 work plan
@@ -57,6 +124,13 @@ marker; everything below is regenerated.
 - Drop quantize loop, f16-only path
 - Prune .gitignore, slim pyproject, refresh benchmark docs
 - *(changelog)* Add CHANGELOG.md, retire per-release RELEASE_NOTES files
+- *(changelog)* Regenerate CHANGELOG.md via git-cliff
+- Add git-cliff config + v*-pushed changelog regeneration workflow
+- *(contributing)* Changelog-auto editorial rules + breaking-change flag note
+- *(changelog)* Add v0.1.0/v0.2.0/v0.3.0 comparison link rows
+- *(readme)* Add topic shield + Topics section reflecting repo metadata
+- *(memory)* Record changelog-automation + GitHub topics context
+- Manual-trigger bench workflow (ubuntu-latest, f16 only)
 ## [0.2.0] - 2026-09-18
 
 ### Added
@@ -364,7 +438,5 @@ marker; everything below is regenerated.
 must be added by hand when a new tag ships, since git-cliff does
 not derive a comparison base URL automatically. -->
 
-[Unreleased]: https://github.com/espetro/dinov2.cpp/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/espetro/dinov2.cpp/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/espetro/dinov2.cpp/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/espetro/dinov2.cpp/releases/tag/v0.1.0
+[Unreleased]: https://github.com/espetro/dinov2.cpp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/espetro/dinov2.cpp/compare/v0.3.0...v0.4.0
