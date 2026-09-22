@@ -26,6 +26,10 @@
   DINOv2 feature extractor running fully in the browser (WebAssembly, SIMD128, single thread).
   Pick two images, get their cosine similarity plus a per-patch heatmap of patch-to-CLS similarity.
 </p>
+<p class="hint">
+  <a href="https://github.com/espetro/dinov2.cpp">github.com/espetro/dinov2.cpp</a>
+  &middot; model: <a id="hfLink" href="https://huggingface.co/dinov2-cpp-core/dinov2-with-registers-small-gguf">dinov2-cpp-core/dinov2-with-registers-small-gguf</a>
+</p>
 
 <fieldset>
   <legend>1. Model</legend>
@@ -42,6 +46,7 @@
     <code>index.html</code>.
   </p>
   <button id="loadBtn">Load model</button>
+  <button id="unloadBtn" disabled>Unload model</button>
   <progress id="modelProgress" value="0" max="1" hidden></progress>
 </fieldset>
 
@@ -63,6 +68,7 @@
 </fieldset>
 
 <button id="compareBtn" disabled>Encode and compare</button>
+<progress id="encProgress" hidden></progress>
 <div id="result"></div>
 <div id="status"></div>
 

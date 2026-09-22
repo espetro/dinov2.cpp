@@ -12,6 +12,29 @@ let Module = null;
 let modelHandle = 0;
 let modelInfo = null;
 
+// Let the browser paint status text before a blocking wasm call.
+const paint = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+// Derive the HF repo page from a .../resolve/... URL, if it is one.
+function hfRepoPage(url) {
+  const m = url.match(/^https?:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolve\//);
+  return m ? `https://huggingface.co/${m[1]}` : null;
+}
+
+function updateHfLink() {
+  const url = $('modelUrl').value.trim();
+  const page = hfRepoPage(url);
+  const link = $('hfLink');
+  if (page) {
+    link.href = page;
+    link.textContent = page.replace('https://huggingface.co/', '');
+  } else {
+    link.href = 'https://huggingface.co/dinov2-cpp-core';
+    link.textContent = 'dinov2-cpp-core';
+  }
+}
+$('modelUrl').addEventListener('input', updateHfLink);
+
 // --- model ---------------------------------------------------------------
 
 async function fetchWithProgress(url, onProgress) {
@@ -53,6 +76,7 @@ $('loadBtn').addEventListener('click', async () => {
     say(`fetched ${(bytes.length / 1e6).toFixed(1)} MB in ${(performance.now() - t0).toFixed(0)} ms`);
 
     say('building model (first call compiles the wasm graph)...');
+    await paint();
     const t1 = performance.now();
     const handle = Module.loadModel(bytes);
     if (!handle) throw new Error('dino_model_load_from_buffer failed (see console/stderr)');
@@ -63,12 +87,24 @@ $('loadBtn').addEventListener('click', async () => {
         `hidden=${modelInfo.hiddenSize} patch=${modelInfo.patchSize} ` +
         `registers=${modelInfo.nRegisterTokens} classifier=${modelInfo.hasClassifier}`);
     $('compareBtn').disabled = false;
+    $('unloadBtn').disabled = false;
   } catch (err) {
     say(`error: ${err.message}`);
   } finally {
     prog.hidden = true;
     $('loadBtn').disabled = false;
   }
+});
+
+$('unloadBtn').addEventListener('click', () => {
+  if (modelHandle && Module) Module.freeModel(modelHandle);
+  modelHandle = 0;
+  modelInfo = null;
+  encodings.A = encodings.B = null;
+  $('compareBtn').disabled = true;
+  $('unloadBtn').disabled = true;
+  $('result').textContent = '';
+  say('model unloaded; wasm memory freed');
 });
 
 // --- image decode ---------------------------------------------------------
@@ -135,6 +171,8 @@ async function encodeInto(which) {
   const file = $(`img${which}`).files[0];
   if (!file) { encodings[which] = null; return null; }
   const img = await decodeImage(file, $(`canvas${which}`));
+  say(`encoding image ${which} (${img.width}x${img.height})...`);
+  await paint(); // let the status line render before the blocking encode
   const t0 = performance.now();
   const enc = Module.encode(modelHandle, img.pixels, img.width, img.height, 4);
   const ms = performance.now() - t0;
@@ -150,6 +188,9 @@ async function encodeInto(which) {
 $('compareBtn').addEventListener('click', async () => {
   if (!modelHandle) return;
   $('compareBtn').disabled = true;
+  $('unloadBtn').disabled = true;
+  $('loadBtn').disabled = true;
+  $('encProgress').hidden = false;
   $('result').textContent = '';
   try {
     const a = await encodeInto('A');
@@ -163,6 +204,9 @@ $('compareBtn').addEventListener('click', async () => {
       $('result').textContent = 'pick at least one image';
     }
   } finally {
+    $('encProgress').hidden = true;
     $('compareBtn').disabled = false;
+    $('unloadBtn').disabled = false;
+    $('loadBtn').disabled = false;
   }
 });
