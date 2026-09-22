@@ -85,7 +85,7 @@ each input gets one JSON line on stdout, identical to running it alone
 ./bin/dinov2-cli -m models/model.gguf -i a.jpg -i b.jpg --batch 2 --print-embeddings
 ```
 
-That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (see [docs/benchmarks.md](docs/benchmarks.md)).
+That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (i9-14900HX, see [benchmarks methodology](docs/benchmarks.md)).
 
 ## C API
 
