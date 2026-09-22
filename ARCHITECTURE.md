@@ -26,7 +26,7 @@ graph TD
     A["dinov2-cli (dinov2-cli.cpp)<br/>CLI shell: argv parsing, image load,<br/>output formatting, bench loop"]
     P["include/dinov2.h<br/>public C API: opaque handles,<br/>params PODs, status codes"]
     W["src/dinov2-c.cpp<br/>wrapper: RGB8 -> Image/ImageF,<br/>chunking, status mapping"]
-    B["dinov2.h<br/>internal API: structs, options,<br/>IMAGENET defaults"]
+    B["src/dinov2-impl.h<br/>internal API: structs, options,<br/>IMAGENET defaults"]
     C["dinov2.cpp<br/>engine: model load (file/buffer/callback),<br/>backend registry init, attn/mlp/swiglu_ffn,<br/>build_graph, dino_ctx + dino_predict"]
     D["src/image.h + src/image.cpp<br/>stb wrappers: load_image,<br/>resize/normalize helpers,<br/>preprocess recipes (bounded/hf/crop518)"]
     E["ggml/ submodule<br/>tensor library + backend registry"]
@@ -51,9 +51,10 @@ graph TD
 ```
 
 Arrows never point upward. `dinov2-cli.cpp` includes `ggml.h` only for timing
-and scheduler synchronisation; all tensor plumbing lives behind `dinov2.h`.
-The C++ internal header stays at the repo root and is not installed;
-`include/dinov2.h` is the stable surface for embedders.
+and scheduler synchronisation; all tensor plumbing lives behind
+`src/dinov2-impl.h`. The internal C++ header is not installed; only `include/`
+is on the library's public include path, so a bare `#include "dinov2.h"`
+always resolves to the stable C API for embedders.
 
 ## File-by-file index (role groups)
 
@@ -70,7 +71,7 @@ graph LR
     classDef asset fill:#efe,stroke:#7a7,color:#000;
     classDef sub   fill:#f0f0f0,stroke:#888,color:#000;
 
-    Core["dinov2.h<br/>dinov2.cpp<br/>include/dinov2.h<br/>src/dinov2-c.cpp"]
+    Core["src/dinov2-impl.h<br/>dinov2.cpp<br/>include/dinov2.h<br/>src/dinov2-c.cpp"]
     Lib["src/image.h<br/>src/image.cpp"]
     CLI["dinov2-cli.cpp"]
     Test["tests/test_image.cpp<br/>tests/test_dinov2.cpp<br/>tests/test_dinov2_c.cpp<br/>tests/test_cli.cpp"]
@@ -99,7 +100,7 @@ Abridged table:
 |:-----|:-----|:-----------------|
 | `include/dinov2.h` | Core | Public C API (opaque handles, status codes); the installed header. |
 | `src/dinov2-c.cpp` | Core | C API wrapper: param conversion, RGB8 packing, chunking, status mapping. |
-| `dinov2.h`, `dinov2.cpp` | Core | Internal C++ API + encoder graph + model load + inference. |
+| `src/dinov2-impl.h`, `dinov2.cpp` | Core | Internal C++ API + encoder graph + model load + inference. |
 | `src/image.{h,cpp}` | Library | stb-backed image load + `dino_preprocess_padded` / feature-mode `--preprocess` recipes (bounded 518 bound, hf, crop518). |
 | `dinov2-cli.cpp` | CLI | `main`: arg parsing + bench loop. |
 | `tests/test_{image,dinov2,dinov2_c,cli}.cpp` | Test | doctest coverage + CLI black-box cases. |
@@ -253,7 +254,7 @@ Two headers, two audiences:
   RGB8 images, and borrowed-pointer `dino_output_*` accessors. Failures come
   back as `dino_status` codes, never aborts. Unstable for the 0.4.x line;
   see `docs/stability.md`.
-- `dinov2.h` is the internal C++ API shared by the engine, the CLI, the C
+- `src/dinov2-impl.h` is the internal C++ API shared by the engine, the CLI, the C
   wrapper, and the tests. It is not installed. Condensed (`...` elides
   parameter lists and comments):
 
@@ -279,7 +280,7 @@ struct dino_model {
 };
 
 // batch bound and feature-mode preprocessing knobs
-constexpr uint32_t DINO_MAX_BATCH = 64;
+constexpr uint32_t dino_max_batch = 64;
 constexpr int DINO_FEATURE_SHORT_EDGE = 518;
 enum class dino_preprocess_mode { bounded, hf, crop518 };
 
@@ -346,7 +347,7 @@ const dino_output *dino_predict(const dino_model &model, dino_ctx &ctx,
                                 const ImageF &img, const dino_run_options &run);
 ```
 
-`dinov2.h` includes `ggml.h`/`ggml-backend.h` and `src/image.h` so callers
+`src/dinov2-impl.h` includes `ggml.h`/`ggml-backend.h` and `src/image.h` so callers
 transitively pick up ggml's types and `Image` / `ImageF`. Per-encode work
 runs through `ctx.sched` (`ggml_backend_sched_reset` +
 `ggml_backend_sched_alloc_graph` + `ggml_backend_sched_graph_compute`), so

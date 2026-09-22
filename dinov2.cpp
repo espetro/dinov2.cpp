@@ -1,6 +1,6 @@
 #define CRT_SECURE_NO_DEPRECATE // Disables ridiculous "unsafe" warnings on Windows
 
-#include "dinov2.h"
+#include "src/dinov2-impl.h"
 #include "ggml.h"
 #include "ggml-backend.h"
 #include "gguf.h"
@@ -1000,7 +1000,7 @@ struct ggml_cgraph *build_graph(const ImgSize img_size, struct ggml_context *ctx
 }
 
 bool dino_batch_size_valid(int64_t n) {
-    return n >= 1 && n <= (int64_t)DINO_MAX_BATCH;
+    return n >= 1 && n <= (int64_t)dino_max_batch;
 }
 
 bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_options &options) {

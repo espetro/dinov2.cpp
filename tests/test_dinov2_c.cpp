@@ -1,15 +1,11 @@
 // C API tests: exercise include/dinov2.h end to end on a synthetic GGUF
 // fixture (TinyModel-equivalent: hidden 16, patch 2, img 8, 2 layers,
 // classifier with 7 classes) and compare against the internal C++ path.
-//
-// The internal header must be included first: the public header defines the
-// DINO_MAX_BATCH macro, which would rewrite the internal constexpr of the
-// same name if the order were flipped.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "dinov2.h"         // internal engine header
-#include "include/dinov2.h" // public C API under test
+#include "dinov2-impl.h" // internal engine header
+#include "dinov2.h"      // public C API under test (include/ on the dinov2 interface path)
 #include "ggml.h"
 #include "gguf.h"
 

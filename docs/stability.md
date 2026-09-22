@@ -19,5 +19,5 @@ What is covered by compatibility guarantees, and what is not.
   embed it.
 - The D2EMB binary preview written by `--embeddings-binary`: explicitly
   unstable; the header carries a version field but no compatibility promise.
-- The internal C++ header `dinov2.h` (repo root): not installed, no
+- The internal C++ header `src/dinov2-impl.h`: not installed, no
   compatibility guarantees at all. It changes freely between commits.

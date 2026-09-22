@@ -4,7 +4,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
-#include "dinov2.h"
+#include "dinov2-impl.h"
 #include "ggml.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
@@ -796,8 +796,8 @@ TEST_CASE("dino_batch_size_valid: bounds") {
     CHECK_FALSE(dino_batch_size_valid(-1));
     CHECK_FALSE(dino_batch_size_valid(0));
     CHECK(dino_batch_size_valid(1));
-    CHECK(dino_batch_size_valid(DINO_MAX_BATCH));
-    CHECK_FALSE(dino_batch_size_valid(DINO_MAX_BATCH + 1));
+    CHECK(dino_batch_size_valid(dino_max_batch));
+    CHECK_FALSE(dino_batch_size_valid(dino_max_batch + 1));
     CHECK_FALSE(dino_batch_size_valid(1'000'000));
 }
 

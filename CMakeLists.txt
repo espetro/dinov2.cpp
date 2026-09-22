@@ -54,13 +54,12 @@ endfunction()
 
 # dinov2 library: engine (dinov2.cpp) + image/preprocessing (src/image.cpp).
 # The public C API in include/dinov2.h is compiled in when
-# DINOV2_BUILD_C_API is on; the internal C++ header stays at the repo root
-# and is not installed.
+# DINOV2_BUILD_C_API is on; the internal C++ header (src/dinov2-impl.h) is
+# not installed. include/ is the only interface directory: consumers doing
+# #include "dinov2.h" always get the public C API.
 add_library(dinov2 dinov2.cpp src/image.cpp)
 target_link_libraries(dinov2 PUBLIC ggml)
-# repo root first: both include/dinov2.h and the internal dinov2.h exist, and
-# the internal header must win bare "dinov2.h" quoted includes
-target_include_directories(dinov2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(dinov2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 dinov2_target_flags(dinov2)
 if (DINOV2_BUILD_C_API)
     target_sources(dinov2 PRIVATE src/dinov2-c.cpp)

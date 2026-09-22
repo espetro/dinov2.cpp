@@ -1,15 +1,11 @@
 // Public C API implementation: the only translation unit that sees both the
-// public header (include/dinov2.h) and the internal engine header
-// (../dinov2.h). Converts between the public by-value PODs and the internal
-// options structs, packs raw RGB8 input into Image/ImageF, chunks batches,
-// and maps failures to dino_status codes.
-
-// Internal header first: the public header defines the DINO_MAX_BATCH macro,
-// which would rewrite the internal constexpr of the same name if included
-// earlier. After both are included, DINO_MAX_BATCH expands to the public 64,
-// which equals the internal cap.
-#include "../dinov2.h"
-#include "include/dinov2.h"
+// public header (include/dinov2.h, found through the target's public include
+// dir) and the internal engine header (dinov2-impl.h, same directory).
+// Converts between the public by-value PODs and the internal options structs,
+// packs raw RGB8 input into Image/ImageF, chunks batches, and maps failures
+// to dino_status codes.
+#include "dinov2-impl.h"
+#include "dinov2.h"
 
 #include <cstdio>
 #include <cstring>
@@ -19,6 +15,9 @@
 #ifndef DINOV2_VERSION
 #define DINOV2_VERSION "dev"
 #endif
+
+// the public macro and the internal constexpr must never drift apart
+static_assert(DINO_MAX_BATCH == dino_max_batch);
 
 namespace {
 

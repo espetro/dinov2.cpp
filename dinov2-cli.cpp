@@ -1,5 +1,5 @@
 #define CRT_SECURE_NO_DEPRECATE // disables "unsafe" warnings on Windows
-#include "dinov2.h"
+#include "src/dinov2-impl.h"
 #include "ggml.h"
 #include "src/image.h"
 #if defined(_WIN32)
@@ -160,7 +160,7 @@ static void print_usage(FILE *out, int argc, char **argv, const dino_cli_params 
             params.fnames_inp.empty() ? "" : params.fnames_inp.front().c_str());
     fprintf(out, "  -s N, --seed          accepted for compatibility; has no effect (default: %d)\n", params.seed);
     fprintf(out, "  --batch N             max images per forward pass; inputs run in chunks of N\n");
-    fprintf(out, "                        (default: %u, max: %u)\n", params.ctx_opts.n_batch, DINO_MAX_BATCH);
+    fprintf(out, "                        (default: %u, max: %u)\n", params.ctx_opts.n_batch, dino_max_batch);
     fprintf(out, "\n");
     fprintf(out, "Preprocessing (feature mode only; rejected with -c):\n");
     fprintf(out, "  --preprocess MODE     bounded (default): resize shortest edge to %d when larger;\n",
@@ -295,7 +295,7 @@ static bool dino_params_parse(int argc, char **argv, dino_cli_params &params) {
             const char *value = next_value(i);
             int32_t     parsed;
             if (!parse_integer(value, parsed) || !dino_batch_size_valid(parsed)) {
-                const std::string range = "an integer from 1 through " + std::to_string(DINO_MAX_BATCH);
+                const std::string range = "an integer from 1 through " + std::to_string(dino_max_batch);
                 numeric_parse_error(arg.c_str(), value, range.c_str(), argc, argv, params);
             }
             params.ctx_opts.n_batch = static_cast<uint32_t>(parsed);

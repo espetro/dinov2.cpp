@@ -2,7 +2,8 @@
 
 // Internal engine header for libdinov2: used by dinov2.cpp, dinov2-cli.cpp,
 // src/dinov2-c.cpp and the unit tests. Not installed; the stable C API lives
-// in include/dinov2.h.
+// in include/dinov2.h. The distinct file name keeps bare "dinov2.h" includes
+// unambiguous between the two headers.
 
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -15,7 +16,7 @@
 #include <optional>
 #include <memory>
 #include <thread>
-#include "src/image.h"
+#include "image.h"
 
 struct ImgSize {
     int width  = 0;
@@ -65,10 +66,12 @@ struct dino_model {
 };
 
 // Maximum accepted value for dino_ctx_options::n_batch / the --batch flag and
-// the public dino_encode() image count.
-constexpr uint32_t DINO_MAX_BATCH = 64;
+// the public dino_encode() image count. Lowercase on purpose: the public
+// header owns the DINO_MAX_BATCH macro, which would rewrite a same-named
+// constexpr in translation units that see both headers.
+constexpr uint32_t dino_max_batch = 64;
 
-// Valid range for a batch size: 1 <= n <= DINO_MAX_BATCH.
+// Valid range for a batch size: 1 <= n <= dino_max_batch.
 bool dino_batch_size_valid(int64_t n);
 
 // Feature-mode preprocessing recipes selectable via --preprocess.
