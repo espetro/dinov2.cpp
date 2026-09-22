@@ -21,6 +21,7 @@ option(DINOV2_BUILD_TESTS "Build doctest unit tests" ON)
 option(DINOV2_BUILD_CLI "Build the dinov2-cli executable" ON)
 option(DINOV2_BUILD_C_API "Build the pure C API (include/dinov2.h) into libdinov2" ON)
 option(DINOV2_BUILD_WASM "Build the Emscripten/WebAssembly target in wasm/ (tier-2)" OFF)
+option(DINOV2_BUILD_SERVER "Build the dinov2-server HTTP microservice in tools/server/ (tier-2)" OFF)
 
 # deps
 add_subdirectory(ggml)
@@ -130,4 +131,10 @@ if (DINOV2_BUILD_WASM)
             "-DCMAKE_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake")
     endif ()
     add_subdirectory(wasm)
+endif ()
+
+# server (tier-2): cpp-httplib microservice over the C API. Off by default,
+# isolated in tools/server/; tier-1 targets never see it.
+if (DINOV2_BUILD_SERVER)
+    add_subdirectory(tools/server)
 endif ()
