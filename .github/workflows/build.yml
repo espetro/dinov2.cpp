@@ -69,6 +69,78 @@ jobs:
       - name: Test
         run: ctest --test-dir build-sanitize --output-on-failure
 
+  # Wires the previously manual quality gates into CI:
+  #   - scripts/test-bench-parser.sh (regression test for bench.sh's JSON parser;
+  #     uses a fake CLI, so no build or weights needed)
+  #   - tests/test_dinov2_converter.py (structural tests for dinov2-to-gguf.py)
+  #   - scripts/check_jsonl_contract.py against real --print-embeddings output
+  #     from a freshly built dinov2-cli and the published small GGUF
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          max-size: 500MB
+          save: false
+
+      - name: Bench parser regression test
+        run: bash scripts/test-bench-parser.sh
+
+      - name: Install Python deps
+        # Lean venv like scripts/publish-gguf.sh: CPU-only torch from the
+        # pytorch index, plus transformers/gguf for the converter test and
+        # the huggingface_hub CLI for the GGUF download below.
+        run: |
+          uv venv .venv-ci
+          uv pip install --python .venv-ci/bin/python \
+            --index-url https://download.pytorch.org/whl/cpu torch
+          uv pip install --python .venv-ci/bin/python \
+            transformers 'gguf>=0.18.0,<0.20' pytest \
+            huggingface_hub hf_xet
+
+      - name: Converter unit tests
+        run: .venv-ci/bin/python -m pytest -q tests/test_dinov2_converter.py
+
+      - name: Build dinov2-cli
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DDINOV2_BUILD_TESTS=OFF
+          cmake --build build --target dinov2-cli -j"$(nproc)"
+
+      - name: Download small GGUF
+        # hf_xet (installed above) is the default accelerated backend in
+        # huggingface_hub 1.x; no HF_HUB_ENABLE_HF_TRANSFER needed.
+        run: |
+          mkdir -p models/dinov2-small
+          .venv-ci/bin/hf download --repo-type model \
+            --local-dir models/dinov2-small \
+            dinov2-cpp-core/dinov2-small-gguf model.gguf
+
+      - name: JSONL contract check on real CLI output
+        run: |
+          build/bin/dinov2-cli \
+            -m models/dinov2-small/model.gguf \
+            -i assets/tench.jpg \
+            --print-embeddings --print-patch-tokens \
+            | python3 scripts/check_jsonl_contract.py
+
   lint:
     runs-on: ubuntu-latest
     steps:

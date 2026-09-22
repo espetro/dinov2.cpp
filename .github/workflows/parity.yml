@@ -1,0 +1,94 @@
+name: parity
+
+# Nightly numerical parity gate: dinov2-cli embeddings vs the Hugging Face
+# reference for both small checkpoints (regular + register tokens). The
+# commands mirror docs/parity/README.md. A drift in any thresholded check
+# fails the job; the red cron run is the signal.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parity
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    name: parity ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: dinov2-small
+            gguf_repo: dinov2-cpp-core/dinov2-small-gguf
+            gguf_dir: models/dinov2-small
+            hf_model: facebook/dinov2-small-imagenet1k-1-layer
+          - name: dinov2-with-registers-small
+            gguf_repo: dinov2-cpp-core/dinov2-with-registers-small-gguf
+            gguf_dir: models/dinov2-with-registers-small
+            hf_model: facebook/dinov2-with-registers-small-imagenet1k-1-layer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          max-size: 500MB
+          save: false
+
+      - name: Build dinov2-cli (Debug, matching docs/parity/README.md)
+        run: |
+          cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DDINOV2_BUILD_TESTS=OFF
+          cmake --build build-debug --target dinov2-cli -j"$(nproc)"
+
+      - name: Install Python deps
+        # Lean venv like scripts/publish-gguf.sh: CPU-only torch from the
+        # pytorch index plus transformers/numpy (Pillow comes in as a
+        # transformers dependency) and the huggingface_hub CLI.
+        run: |
+          uv venv .venv-parity
+          uv pip install --python .venv-parity/bin/python \
+            --index-url https://download.pytorch.org/whl/cpu torch
+          uv pip install --python .venv-parity/bin/python \
+            transformers numpy huggingface_hub hf_xet
+
+      - name: Download published f16 GGUF
+        run: |
+          mkdir -p "${{ matrix.gguf_dir }}"
+          .venv-parity/bin/hf download --repo-type model \
+            --local-dir "${{ matrix.gguf_dir }}" \
+            "${{ matrix.gguf_repo }}" model.gguf
+
+      - name: Run parity check
+        # Gates copied verbatim from docs/parity/README.md. The patch-token
+        # minimum stays informational (--patches-token-min-threshold 0); a
+        # nonzero exit fails the job.
+        run: |
+          .venv-parity/bin/python scripts/parity_check.py \
+            --cli build-debug/bin/dinov2-cli \
+            --gguf "${{ matrix.gguf_dir }}/model.gguf" \
+            --hf-model "${{ matrix.hf_model }}" \
+            --image assets/tench.jpg \
+            --cls-threshold 0.999 --pooled-threshold 0.999 \
+            --patches-threshold 0.99 --patches-token-min-threshold 0 \
+            --prob-tolerance 0.05
