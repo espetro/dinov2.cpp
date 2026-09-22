@@ -147,12 +147,16 @@ enum dino_status encode_impl(dino_ctx &ctx, const dino_image *images, int32_t n_
                imgs_f[e].ny == imgs_f[s].ny) {
             ++e;
         }
-        const std::vector<ImageF>       chunk(imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e);
-        const std::vector<dino_output> &outs = dino_predict(model, ctx, chunk, run);
-        if (outs.empty()) {
+        const std::vector<ImageF> chunk(imgs_f.begin() + (ptrdiff_t)s, imgs_f.begin() + (ptrdiff_t)e);
+        // dino_predict stores its results in ctx.last_outputs; move each
+        // chunk out instead of deep-copying every output vector
+        dino_predict(model, ctx, chunk, run);
+        if (ctx.last_outputs.empty()) {
             return predict_status(ctx);
         }
-        all.insert(all.end(), outs.begin(), outs.end());
+        for (dino_output &out : ctx.last_outputs) {
+            all.push_back(std::move(out));
+        }
         s = e;
     }
     ctx.last_outputs = std::move(all);
