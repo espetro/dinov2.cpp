@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dinov2.cpp wasm demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; margin-bottom: 1rem; }
+  label { display: block; margin: .4rem 0; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: .3rem; }
+  button { padding: .4rem 1rem; }
+  progress { width: 100%; height: .8rem; }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .col { flex: 1; min-width: 240px; }
+  canvas { max-width: 100%; border: 1px solid #8884; border-radius: 4px; }
+  #status { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .85rem; }
+  #result { font-size: 1.2rem; font-weight: 600; margin: .5rem 0; }
+  .hint { font-size: .8rem; opacity: .7; }
+</style>
+</head>
+<body>
+<h1>dinov2.cpp wasm demo</h1>
+<p class="hint">
+  DINOv2 feature extractor running fully in the browser (WebAssembly, SIMD128, single thread).
+  Pick two images, get their cosine similarity plus a per-patch heatmap of patch-to-CLS similarity.
+</p>
+
+<fieldset>
+  <legend>1. Model</legend>
+  <label>GGUF URL
+    <input id="modelUrl" type="text" value="model.gguf"
+           placeholder="model.gguf or https://huggingface.co/dinov2-cpp-core/dinov2-small-gguf/resolve/main/model.gguf">
+  </label>
+  <p class="hint">
+    Default <code>model.gguf</code> is fetched relative to this page: drop a GGUF next to
+    <code>index.html</code>. huggingface.co <code>/resolve/</code> URLs send CORS headers, so
+    e.g. <code>https://huggingface.co/dinov2-cpp-core/dinov2-small-gguf/resolve/main/model.gguf</code>
+    (~50 MB f16 ViT-S) also works directly.
+  </p>
+  <button id="loadBtn">Load model</button>
+  <progress id="modelProgress" value="0" max="1" hidden></progress>
+</fieldset>
+
+<fieldset>
+  <legend>2. Images</legend>
+  <div class="row">
+    <div class="col">
+      <label>Image A <input id="imgA" type="file" accept="image/*"></label>
+      <canvas id="canvasA" width="8" height="8" hidden></canvas>
+      <canvas id="heatA" width="8" height="8" hidden></canvas>
+    </div>
+    <div class="col">
+      <label>Image B <input id="imgB" type="file" accept="image/*"></label>
+      <canvas id="canvasB" width="8" height="8" hidden></canvas>
+      <canvas id="heatB" width="8" height="8" hidden></canvas>
+    </div>
+  </div>
+  <p class="hint">Inputs are capped at 1200 px before encoding; the engine rescales to its bounded recipe internally.</p>
+</fieldset>
+
+<button id="compareBtn" disabled>Encode and compare</button>
+<div id="result"></div>
+<div id="status"></div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>
