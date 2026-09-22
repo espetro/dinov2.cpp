@@ -459,3 +459,11 @@ the HF image processor.
 which is not valid JSON; this only happens on pathological inputs.
 String escaping covers `"` and `\` only, which suffices for the bundled
 ImageNet labels.
+
+## See also
+
+- [tools/server/README.md](../tools/server/README.md): `dinov2-server`
+  exposes the same embeddings over HTTP (tier-2, off by default).
+- [examples/dedup/](../examples/dedup/): a stdlib-only script that consumes
+  this JSONL output to cluster near-duplicate images.
+- [stability.md](stability.md): which parts of this contract are frozen.

@@ -56,6 +56,13 @@ and scheduler synchronisation; all tensor plumbing lives behind
 is on the library's public include path, so a bare `#include "dinov2.h"`
 always resolves to the stable C API for embedders.
 
+**Tier-2 surfaces** (`tools/server/`, `wasm/`, `examples/`) sit above this
+graph: they may consume the public C header and in-repo internal headers
+(`src/image.h`), but nothing tier-1 includes, links, or shells out to them.
+They are off-by-default (`DINOV2_BUILD_WASM`, `DINOV2_BUILD_SERVER`) or not
+part of the build at all, and their CI jobs are advisory only. See
+[docs/tiers.md](docs/tiers.md).
+
 ## File-by-file index (role groups)
 
 ```mermaid
@@ -77,8 +84,9 @@ graph LR
     Test["tests/test_image.cpp<br/>tests/test_dinov2.cpp<br/>tests/test_dinov2_c.cpp<br/>tests/test_cli.cpp"]
     Tool["scripts/bench.sh<br/>scripts/dinov2-to-gguf.py<br/>scripts/publish-gguf.sh"]
     Build["CMakeLists.txt<br/>CMakePresets.json<br/>src/stb_image.h<br/>src/stb_image_write.h<br/>src/doctest.h"]
-    CI[".github/workflows/release.yml<br/>.github/workflows/build.yml<br/>.github/workflows/convert-and-publish-gguf.yml"]
-    Doc["README.md<br/>CONTRIBUTING.md<br/>docs/cli.md<br/>docs/build.md<br/>docs/benchmarks.md<br/>docs/hf-publishing.md<br/>ARCHITECTURE.md<br/>CHANGELOG.md"]
+    Tier2["wasm/ (embind shim + demo)<br/>tools/server/ (dinov2-server)<br/>examples/ (dedup, ci-visual-regression)"]
+    CI[".github/workflows/release.yml<br/>.github/workflows/build.yml<br/>.github/workflows/extras.yml<br/>.github/workflows/convert-and-publish-gguf.yml"]
+    Doc["README.md<br/>CONTRIBUTING.md<br/>docs/cli.md<br/>docs/build.md<br/>docs/benchmarks.md<br/>docs/hf-publishing.md<br/>docs/stability.md + docs/tiers.md<br/>docs/wasm.md<br/>ARCHITECTURE.md<br/>CHANGELOG.md"]
     Asset["assets/logo/<br/>assets/tench.jpg<br/>assets/logo.png"]
     Sub["ggml/ (submodule)"]
 
@@ -87,6 +95,7 @@ graph LR
     class CLI cli
     class Test test
     class Tool tool
+    class Tier2 tool
     class Build build
     class CI ci
     class Doc doc
@@ -106,7 +115,10 @@ Abridged table:
 | `tests/test_{image,dinov2,dinov2_c,cli}.cpp` | Test | doctest coverage + CLI black-box cases. |
 | `scripts/{bench.sh,dinov2-to-gguf.py,publish-gguf.sh}` | Tool | Bench sweep + PyTorch→GGUF + HF upload. |
 | `CMakeLists.txt`, `CMakePresets.json`, vendored stb/doctest | Build | CMake build + vendored single-file deps. |
-| `.github/workflows/*` | CI | 3 workflows: release, build, convert-and-publish. |
+| `wasm/` | Tier-2 | Emscripten embind shim over the C API + browser demo (`DINOV2_BUILD_WASM`). |
+| `tools/server/` | Tier-2 | `dinov2-server` HTTP embeddings service over the C API + vendored cpp-httplib (`DINOV2_BUILD_SERVER`). |
+| `examples/` | Tier-2 | Copy-paste examples: `dedup/` (near-duplicate finder), `ci-visual-regression/` (GitHub Action). |
+| `.github/workflows/*` | CI | build, release, convert-and-publish, parity, bench, changelog, extras (tier-2 advisory jobs). |
 | `README.md`, `CONTRIBUTING.md`, `docs/*`, `ARCHITECTURE.md`, `RELEASE_NOTES_*.md` | Doc | User + contributor-facing docs. |
 | `assets/*` | Asset | Logo + default input image. |
 | `ggml/` | Submodule | Vendored ggml at pinned SHA. |
@@ -159,6 +171,11 @@ themselves with `add_test(NAME …)`; `ctest --test-dir build` runs all four.
 `test_dinov2_c` exercises the public C API on synthetic GGUFs.
 `dinov2-cli` itself is not a test (a real GGUF + image are only guaranteed
 when `models/` is populated).
+
+Two optional executables exist only when their tier-2 options are ON:
+`dinov2-wasm` (`DINOV2_BUILD_WASM`, Emscripten toolchain) and
+`dinov2-server` (`DINOV2_BUILD_SERVER`, vendored cpp-httplib). Neither is in
+the default `all` graph unless requested.
 
 ## CLI surface
 

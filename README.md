@@ -112,6 +112,22 @@ dino_model_free(m);
 
 The API is unstable for the 0.4.x line; see [docs/stability.md](docs/stability.md).
 
+## Tier-2 extras
+
+Opt-in surfaces, off by default and not covered by the stability contract
+([docs/tiers.md](docs/tiers.md)):
+
+- **HTTP server**: `dinov2-server` is a single-binary embeddings
+  microservice over the C API (`-DDINOV2_BUILD_SERVER=ON`). POST an image to
+  `/v1/embeddings`, get `cls`/`pooled`/patch vectors back as JSON. See
+  [tools/server/README.md](tools/server/README.md).
+- **wasm**: the encoder compiles to WebAssembly and runs in the browser;
+  see [docs/wasm.md](docs/wasm.md).
+- **examples/**: `examples/dedup/` finds near-duplicate photos with the CLI
+  (stdlib-only Python, writes an HTML review page);
+  `examples/ci-visual-regression/` is a copy-paste GitHub Action that gates
+  screenshots by embedding cosine.
+
 ## Features
 
 | Feature | Detail |
@@ -147,6 +163,7 @@ For patch and dense feature workflows, the register-token variants are the recom
 - [docs/benchmarks.md](docs/benchmarks.md): benchmarks against PyTorch, how to run your own
 - [docs/hf-publishing.md](docs/hf-publishing.md): how CI publishes GGUF weights to Hugging Face
 - [docs/wasm.md](docs/wasm.md): Emscripten/WebAssembly build and browser demo
+- [docs/stability.md](docs/stability.md) + [docs/tiers.md](docs/tiers.md): the compatibility contract and tier policy
 
 ## Why this fork
 
