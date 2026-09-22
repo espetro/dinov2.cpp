@@ -227,6 +227,10 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     // if there aren't GPU Backends fallback to CPU backend
     if (!model.backend) {
         model.backend = ggml_backend_cpu_init();
+        if (!model.backend) {
+            fprintf(stderr, "%s: ggml_backend_cpu_init() failed\n", __func__);
+            return false;
+        }
         ggml_backend_cpu_set_n_threads(model.backend, params.n_threads);
     }
 
