@@ -849,10 +849,11 @@ void forward_head(const ImgSize img_size, struct ggml_cgraph *graph, struct ggml
 }
 
 struct ggml_cgraph *build_graph(const ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
-                                const dino_params &params) {
+                                const dino_params &params, const size_t graph_size) {
     const auto &hparams = model.hparams;
 
-    struct ggml_cgraph *gf = ggml_new_graph(ctx_cgraph);
+    // a 40-layer model emits ~2k nodes, past GGML_DEFAULT_GRAPH_SIZE (2048)
+    struct ggml_cgraph *gf = ggml_new_graph_custom(ctx_cgraph, graph_size, false);
 
     forward_features(img_size, gf, ctx_cgraph, model, params);
 
@@ -1264,11 +1265,14 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
     // graph size derived from the layer count: each encoder layer emits
     // ~35-45 nodes (a bit more on the flash path), plus ~50 fixed nodes for
     // patch embedding, the token glue, and the output heads. 64 per layer
-    // leaves comfortable headroom without the fixed 8192-node pool.
+    // leaves comfortable headroom without the fixed 8192-node pool. The same
+    // value sizes the ctx_cgraph tensor pool and the cgraph node capacity;
+    // a 40-layer model exceeds GGML_DEFAULT_GRAPH_SIZE (2048), so both must
+    // use the custom-size ggml entry points.
     const size_t graph_size = (size_t)model.hparams.num_hidden_layers * 64 + 128;
 
     struct ggml_init_params params0 = {
-        /*.mem_size   =*/ggml_tensor_overhead() * graph_size + ggml_graph_overhead(),
+        /*.mem_size   =*/ggml_tensor_overhead() * graph_size + ggml_graph_overhead_custom(graph_size, false),
         /*.mem_buffer =*/nullptr,
         /*.no_alloc   =*/true, // the tensors will be allocated later by ggml_gallocr_alloc_graph()
     };
@@ -1277,7 +1281,7 @@ std::vector<dino_output> dino_predict(const dino_model &model, const std::vector
         fprintf(stderr, "%s: ggml_init() failed\n", __func__);
         return {};
     }
-    struct ggml_cgraph *gf = build_graph({nx, ny}, ctx_cgraph, model, batch_params);
+    struct ggml_cgraph *gf = build_graph({nx, ny}, ctx_cgraph, model, batch_params, graph_size);
 
     if (!ggml_gallocr_alloc_graph(allocr, gf)) {
         fprintf(stderr,

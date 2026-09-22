@@ -149,8 +149,10 @@ bool dino_model_load(ImgSize img_size, const std::string &fname, dino_model &mod
 
 std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embed_data, const dino_hparams &hparams);
 
+// graph_size is the cgraph node capacity; it must cover every node the
+// encoder emits (see dino_predict for the per-layer sizing expression).
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
-                                const dino_params &params);
+                                const dino_params &params, size_t graph_size);
 
 // Batch inference: runs the model on up to params.n_batch preprocessed images
 // and returns one dino_output per image, in input order. All images must share
