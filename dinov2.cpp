@@ -94,7 +94,7 @@ ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params) {
     return preprocess_resize_crop(img, 256, 224);
 }
 
-ImageF dino_preprocess(const Image &img, const dino_hparams &params) {
+ImageF dino_preprocess_padded(const Image &img, const dino_hparams &params) {
     const auto patch = static_cast<int>(params.patch_size);
     const auto new_w = ((img.nx + patch - 1) / patch) * patch;
     const auto new_h = ((img.ny + patch - 1) / patch) * patch;
@@ -1053,20 +1053,24 @@ void dino_ctx_free(dino_ctx &ctx) {
         ggml_backend_free(ctx.cpu_fallback);
         ctx.cpu_fallback = nullptr;
     }
-    ctx.model   = nullptr;
-    ctx.options = dino_ctx_options{};
+    ctx.model       = nullptr;
+    ctx.options     = dino_ctx_options{};
+    ctx.last_status = dino_errc::ok;
 }
 
 const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &ctx,
                                              const std::vector<ImageF> &imgs, const dino_run_options &run) {
     ctx.last_outputs.clear();
+    ctx.last_status = dino_errc::ok;
     const dino_ctx_options &options = ctx.options;
     if (imgs.empty()) {
         fprintf(stderr, "%s: no input images\n", __func__);
+        ctx.last_status = dino_errc::invalid_argument;
         return ctx.last_outputs;
     }
     if (imgs.size() > options.n_batch) {
         fprintf(stderr, "%s: %zu images exceed n_batch = %u\n", __func__, imgs.size(), options.n_batch);
+        ctx.last_status = dino_errc::invalid_argument;
         return ctx.last_outputs;
     }
     // a single graph is built for the whole batch, so every image must share
@@ -1077,12 +1081,14 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
         if (img.nx != nx || img.ny != ny) {
             fprintf(stderr, "%s: batch images must share dimensions (%dx%d vs %dx%d)\n", __func__, img.nx, img.ny, nx,
                     ny);
+            ctx.last_status = dino_errc::invalid_argument;
             return ctx.last_outputs;
         }
         // the planar deinterleave below indexes data[i * 3 + c]
         if (img.c != 3 || img.data.size() != (size_t)img.nx * img.ny * 3) {
             fprintf(stderr, "%s: expected a 3-channel float image of %dx%d (%zu values), got c=%d, %zu values\n",
                     __func__, img.nx, img.ny, (size_t)img.nx * img.ny * 3, img.c, img.data.size());
+            ctx.last_status = dino_errc::invalid_argument;
             return ctx.last_outputs;
         }
     }
@@ -1112,6 +1118,7 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
     struct ggml_context *ctx_cgraph = ggml_init(params0);
     if (!ctx_cgraph) {
         fprintf(stderr, "%s: ggml_init() failed\n", __func__);
+        ctx.last_status = dino_errc::alloc_failed;
         return ctx.last_outputs;
     }
     struct ggml_cgraph *gf = build_graph({nx, ny}, ctx_cgraph, model, batch_options, run.classify, graph_size);
@@ -1124,6 +1131,7 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
                 "%s: failed to allocate compute graph for a %d x %d input (%lld patch tokens); "
                 "reduce input size or use --preprocess crop518 / --max-tokens\n",
                 __func__, nx, ny, (long long)num_patches);
+        ctx.last_status = dino_errc::alloc_failed;
         ggml_free(ctx_cgraph);
         return ctx.last_outputs;
     }
@@ -1162,6 +1170,7 @@ const std::vector<dino_output> &dino_predict(const dino_model &model, dino_ctx &
 
     if (ggml_backend_sched_graph_compute(ctx.sched, gf) != GGML_STATUS_SUCCESS) {
         fprintf(stderr, "%s: ggml_backend_sched_graph_compute() failed\n", __func__);
+        ctx.last_status = dino_errc::compute_failed;
         ggml_free(ctx_cgraph);
         return ctx.last_outputs;
     }

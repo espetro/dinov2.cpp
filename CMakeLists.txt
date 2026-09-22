@@ -58,11 +58,19 @@ endfunction()
 # and is not installed.
 add_library(dinov2 dinov2.cpp src/image.cpp)
 target_link_libraries(dinov2 PUBLIC ggml)
-target_include_directories(dinov2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# repo root first: both include/dinov2.h and the internal dinov2.h exist, and
+# the internal header must win bare "dinov2.h" quoted includes
+target_include_directories(dinov2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 dinov2_target_flags(dinov2)
-if (NOT BUILD_SHARED_LIBS)
-    # consumers of the static library must not see dllimport annotations
-    target_compile_definitions(dinov2 PUBLIC DINO_STATIC)
+if (DINOV2_BUILD_C_API)
+    target_sources(dinov2 PRIVATE src/dinov2-c.cpp)
+endif ()
+if (BUILD_SHARED_LIBS)
+    # DINOV2_SHARED is public so consumers get dllimport; DINOV2_BUILD marks
+    # the library's own TU for dllexport. WINDOWS_EXPORT_ALL_SYMBOLS lets the
+    # CLI and tests still reach the internal C++ symbols in shared builds.
+    target_compile_definitions(dinov2 PUBLIC DINOV2_SHARED PRIVATE DINOV2_BUILD)
+    set_target_properties(dinov2 PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif ()
 
 # dinov2 executable

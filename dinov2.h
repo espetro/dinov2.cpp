@@ -146,7 +146,7 @@ struct dino_output {
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 
-ImageF dino_preprocess(const Image &img, const dino_hparams &params);
+ImageF dino_preprocess_padded(const Image &img, const dino_hparams &params);
 
 // Feature-mode preprocessing: dispatches on options.preprocess_mode
 // (bounded / hf / crop518; --no-resize applies to bounded only).
@@ -181,6 +181,15 @@ std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embe
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
                                 const dino_ctx_options &options, bool classify, size_t graph_size);
 
+// Failure categories recorded in dino_ctx::last_status by dino_predict; the
+// public dino_status enum in include/dinov2.h mirrors these codes.
+enum class dino_errc {
+    ok,
+    invalid_argument,
+    alloc_failed,
+    compute_failed,
+};
+
 // Inference context: owns the backend scheduler (which owns the graph
 // allocator), the options applied to every run, and the outputs of the most
 // recent predict call. Create one per model after dino_model_load. Not
@@ -193,6 +202,9 @@ struct dino_ctx {
     // model.backend is not CPU (ggml_backend_sched requires a CPU tail)
     ggml_backend_t            cpu_fallback = nullptr;
     std::vector<dino_output>  last_outputs; // owned by the ctx; overwritten on each predict
+    // failure category of the last predict; meaningful only when
+    // last_outputs is empty after a call
+    dino_errc                 last_status = dino_errc::ok;
 };
 
 bool dino_ctx_init(dino_ctx &ctx, const dino_model &model, const dino_ctx_options &options);

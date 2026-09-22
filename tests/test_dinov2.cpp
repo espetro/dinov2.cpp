@@ -1,5 +1,5 @@
 // unit tests for dinov2.cpp pure functions: dino_hparams math,
-// interpolate_pos_embed, dino_preprocess fallback.
+// interpolate_pos_embed, dino_preprocess_padded fallback.
 // No GGUF fixtures required - all tests run on synthetic inputs.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -376,7 +376,7 @@ TEST_CASE("interpolate_pos_embed: equal patch count with different aspect still 
     }
 }
 
-TEST_CASE("dino_preprocess: pads non-aligned input to next patch-multiple") {
+TEST_CASE("dino_preprocess_padded: pads non-aligned input to next patch-multiple") {
     // 100x50 input with patch_size=14:
     //   new_w = (100/14 + 1) * 14 = 8 * 14 = 112
     //   new_h = (50/14 + 1) * 14 = 4 * 14 = 56
@@ -390,7 +390,7 @@ TEST_CASE("dino_preprocess: pads non-aligned input to next patch-multiple") {
     img.c  = 3;
     img.data.assign((size_t)img.nx * img.ny * 3, 128);
 
-    const auto out = dino_preprocess(img, h);
+    const auto out = dino_preprocess_padded(img, h);
 
     CHECK(out.nx == (img.nx / (int)h.patch_size + 1) * (int)h.patch_size);
     CHECK(out.ny == (img.ny / (int)h.patch_size + 1) * (int)h.patch_size);
@@ -410,7 +410,7 @@ TEST_CASE("dino_preprocess: pads non-aligned input to next patch-multiple") {
     }
 }
 
-TEST_CASE("dino_preprocess: image smaller than patch triggers resize") {
+TEST_CASE("dino_preprocess_padded: image smaller than patch triggers resize") {
     // 7x3 source with patch_size=14: (7/14)+1 = 1, *14 = 14 each dim.
     dino_hparams h;
     h.img_size   = 224;
@@ -422,7 +422,7 @@ TEST_CASE("dino_preprocess: image smaller than patch triggers resize") {
     img.c  = 3;
     img.data.assign((size_t)7 * 3 * 3, 64);
 
-    const auto out = dino_preprocess(img, h);
+    const auto out = dino_preprocess_padded(img, h);
 
     CHECK(out.nx == 14);
     CHECK(out.ny == 14);
@@ -435,7 +435,7 @@ TEST_CASE("dino_preprocess: image smaller than patch triggers resize") {
     }
 }
 
-TEST_CASE("dino_preprocess: normalization formula across all channels") {
+TEST_CASE("dino_preprocess_padded: normalization formula across all channels") {
     Image img;
     img.nx = 15;
     img.ny = 15;
@@ -453,7 +453,7 @@ TEST_CASE("dino_preprocess: normalization formula across all channels") {
     h.img_size   = 224;
     h.patch_size = 14;
 
-    const auto out = dino_preprocess(img, h);
+    const auto out = dino_preprocess_padded(img, h);
     REQUIRE(out.nx == 28);
     REQUIRE(out.ny == 28);
 
@@ -540,7 +540,7 @@ TEST_CASE("dino_classify_preprocess: wide input preserves aspect (shortest-edge 
     }
 }
 
-TEST_CASE("dino_preprocess: true ceil keeps patch-aligned dims unchanged") {
+TEST_CASE("dino_preprocess_padded: true ceil keeps patch-aligned dims unchanged") {
     // Under true ceil a dimension already at a multiple of patch_size is
     // unchanged: 518 -> 518 (37 patches), not 532 (38) as strict round-up did.
     dino_hparams h;
@@ -553,7 +553,7 @@ TEST_CASE("dino_preprocess: true ceil keeps patch-aligned dims unchanged") {
     img.c  = 3;
     img.data.assign((size_t)img.nx * img.ny * 3, 128);
 
-    const auto out = dino_preprocess(img, h);
+    const auto out = dino_preprocess_padded(img, h);
     CHECK(out.nx == 518);
     CHECK(out.ny == 518);
 
@@ -563,7 +563,7 @@ TEST_CASE("dino_preprocess: true ceil keeps patch-aligned dims unchanged") {
     img112.c  = 3;
     img112.data.assign((size_t)112 * 56 * 3, 128);
 
-    const auto out112 = dino_preprocess(img112, h);
+    const auto out112 = dino_preprocess_padded(img112, h);
     CHECK(out112.nx == 112);
     CHECK(out112.ny == 56);
 }
@@ -606,7 +606,7 @@ TEST_CASE("dino_feature_preprocess: bounded leaves images under the bound untouc
     img.data.assign((size_t)img.nx * img.ny * 3, 128);
 
     const auto out    = dino_feature_preprocess(img, h, params);
-    const auto native = dino_preprocess(img, h);
+    const auto native = dino_preprocess_padded(img, h);
 
     CHECK(out.nx == 504);
     CHECK(out.ny == 378);
@@ -711,9 +711,9 @@ TEST_CASE("dino_feature_output_size matches dino_feature_preprocess dims") {
     }
 }
 
-TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess under the bound") {
+TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess_padded under the bound") {
     // shortest edge <= 518: bounded does a single resample to the same
-    // patch-aligned dims dino_preprocess computes, so bytes must match.
+    // patch-aligned dims dino_preprocess_padded computes, so bytes must match.
     dino_hparams h;
     h.patch_size = 14;
     dino_ctx_options params;
@@ -728,7 +728,7 @@ TEST_CASE("dino_feature_preprocess: bounded output identical to dino_preprocess 
     }
 
     const auto a = dino_feature_preprocess(img, h, params);
-    const auto b = dino_preprocess(img, h);
+    const auto b = dino_preprocess_padded(img, h);
     CHECK(a.nx == b.nx);
     CHECK(a.ny == b.ny);
     CHECK(a.data == b.data);
