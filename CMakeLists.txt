@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(dinov2
-        VERSION 0.4.0
+        VERSION 0.5.0
         DESCRIPTION "Inference DINOv2 in plain C/C++ with ggml"
-        HOMEPAGE_URL "https://github.com/lavaman131/dinov2.cpp")
+        HOMEPAGE_URL "https://github.com/espetro/dinov2.cpp")
 
 set(CMAKE_CXX_STANDARD 20)
 

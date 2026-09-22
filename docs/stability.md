@@ -13,7 +13,7 @@ promotion process live in [tiers.md](tiers.md).
 | `dinov2-cli` flags and output | Flag names/semantics, JSONL/JSON output keys and order, human-readable top-k format, exit codes, stderr messages ([cli.md](cli.md)) | Semver: breaking changes bump minor (0.x) or major and are called out in release notes |
 | `--print-embeddings` JSONL schema | Record keys, types, field semantics, per-line ordering (`index` == line number) | Semver, same as the CLI. Additive keys are allowed in minor releases; removed/renamed/retyped keys are breaking |
 | `libdinov2` build target | The `dinov2` CMake target name, `include/` as its only public interface dir, `BUILD_SHARED_LIBS` support | Semver |
-| C API (`include/dinov2.h`) | `dino_*` functions, `dino_status`, params PODs, accessor borrow semantics | **Unstable for the 0.4.x line**: signatures and struct layouts may change between minor releases. Stabilizes at a later minor (announced in release notes). Pin a tag if you embed it |
+| C API (`include/dinov2.h`) | `dino_*` functions, `dino_status`, params PODs, accessor borrow semantics | **Unstable during the 0.x series**: signatures and struct layouts may change between minor releases. Stabilizes at a later minor (announced in release notes). Pin a tag if you embed it |
 | GGUF schema | Metadata keys and tensor names the loader reads, as written by `scripts/dinov2-to-gguf.py` | Stable: the loader keeps reading GGUFs produced by released converters |
 | GGUF publishing | The `dinov2-cpp-core` HF profile, repo naming (`dinov2-*-gguf`), `model.gguf` filename | Best-effort stable: repos and file names are not renamed or deleted without a deprecation notice |
 
@@ -48,7 +48,7 @@ When a tier-1 surface must break:
 2. The breaking change lands with a `BREAKING` note in the changelog and
    release notes.
 3. `DINO_DEPRECATED` marks doomed C API functions once the C API is stable;
-   while it is unstable (0.4.x) functions may simply change.
+   while it is unstable (pre-1.0) functions may simply change.
 
 Tier-2 surfaces skip this process entirely; their preview status is the
 warning.
