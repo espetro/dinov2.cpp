@@ -15,6 +15,8 @@ Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system d
 
 **Release post & benchmarks → https://alexlavaee.me/projects/dinov2cpp/**
 
+**[Try it in your browser](https://espetro.github.io/dinov2.cpp/): the wasm demo runs the encoder fully client-side, nothing to install.**
+
 ## Quick start
 
 ### Quickstart with agents
@@ -87,7 +89,44 @@ each input gets one JSON line on stdout, identical to running it alone
 ./bin/dinov2-cli -m models/model.gguf -i a.jpg -i b.jpg --batch 2 --print-embeddings
 ```
 
-That's it. Up to **3x faster than PyTorch on CPU** with up to **4x less memory** (i9-14900HX, see [benchmarks methodology](docs/benchmarks.md)).
+That's it. Committed benchmark rows, measured by CI on GitHub-hosted runners
+(dinov2-small, f16 GGUF, CPU, batch 1, forward pass only; full provenance in
+[docs/benchmarks.md](docs/benchmarks.md)):
+
+| Runner | Threads | Mean | Peak RSS |
+|:-------|--------:|-----:|---------:|
+| `ubuntu-latest` (x86_64) | 12 | 255.0 ms | 104 MB |
+| `ubuntu-24.04-arm` (aarch64) | 4 | 133.8 ms | 96 MB |
+
+For scale, an older desktop comparison on an i9-14900HX (24 threads) measured
+small-with-registers at 64 ms vs 297 ms under PyTorch, with peak memory at
+110 MB vs 455 MB. That table is retained as
+[historical context](docs/benchmarks.md#historical-comparison) only and is not
+reproducible from the CI workflow. Reproduce on your own hardware with
+`--bench --bench-json`.
+
+## Who is this for
+
+- **Photo or asset dedup**: [examples/dedup/](examples/dedup/) clusters
+  near-duplicates with the CLI and writes an HTML review page. Measured on a
+  360-image synthetic corpus: 124 s wall clock, precision 1.0, recall 0.977 at
+  the default threshold.
+- **Embeddings over HTTP**: [tools/server/](tools/server/) is a single-binary
+  microservice; POST an image to `/v1/embeddings`, get vectors back as JSON.
+- **Running in the browser**: the encoder compiles to WebAssembly
+  ([wasm/](wasm/), [docs/wasm.md](docs/wasm.md)); there is a
+  [live demo](https://espetro.github.io/dinov2.cpp/).
+- **CI visual gating**: [examples/ci-visual-regression/](examples/ci-visual-regression/)
+  is a copy-paste GitHub Action that compares screenshots by embedding cosine.
+- **Containers**: [examples/container/](examples/container/) builds a 45 MB
+  scratch image.
+- **Library integration**: embed `libdinov2` through the C API in
+  [include/dinov2.h](include/dinov2.h); no ggml types leak into the surface.
+
+Not for: text or cross-modal search (embeddings are image-to-image only; use a
+CLIP-style model for text queries), HEIC/RAW/WebP/AVIF inputs without
+converting first, or corpora above ~1M images without a real ANN index
+(FAISS, sqlite-vec, ...) on top.
 
 ## C API
 
@@ -128,7 +167,8 @@ Opt-in surfaces, off by default and not covered by the stability contract
 - **examples/**: `examples/dedup/` finds near-duplicate photos with the CLI
   (stdlib-only Python, writes an HTML review page);
   `examples/ci-visual-regression/` is a copy-paste GitHub Action that gates
-  screenshots by embedding cosine.
+  screenshots by embedding cosine; `examples/container/` packages the CLI as a
+  45 MB scratch image.
 
 ## Features
 
@@ -162,18 +202,21 @@ Ready-to-download f16 GGUF weights, published by CI to the [`dinov2-cpp-core`](h
 
 Backbone-only checkpoints carry the same encoder weights without the ImageNet
 classifier head. They run the feature modes (`--print-embeddings`,
-`--print-patch-tokens`, `-o` PCA, `--bench`) and reject `-c` cleanly:
+`--print-patch-tokens`, `-o` PCA, `--bench`) and reject `-c` cleanly. The
+`dinov2-backbone-*` repos below are wired into the
+[publish workflow](docs/hf-publishing.md) but are not published on Hugging
+Face yet; the table lists the target repo names and expected sizes:
 
-| Model | GGUF download | Size | Recommendation |
+| Model | GGUF repo (pending publish) | Size | Recommendation |
 |:-----:|:--------------|-----:|:---------------|
-| small (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-small-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-small-gguf) | ~50 MB | Feature mode only; no classifier head |
-| base (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-base-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-base-gguf) | ~180 MB | Feature mode only; no classifier head |
-| large (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-large-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-large-gguf) | ~620 MB | Feature mode only; no classifier head |
-| giant (backbone, no registers) | [`dinov2-cpp-core/dinov2-backbone-giant-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-giant-gguf) | ~2.2 GB | Feature mode only; no classifier head |
-| small (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-small-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-small-gguf) | ~50 MB | Feature mode only; no classifier head |
-| base (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-base-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-base-gguf) | ~180 MB | Feature mode only; no classifier head |
-| large (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-large-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-large-gguf) | ~620 MB | Feature mode only; no classifier head |
-| giant (backbone, registers) | [`dinov2-cpp-core/dinov2-backbone-with-registers-giant-gguf`](https://huggingface.co/dinov2-cpp-core/dinov2-backbone-with-registers-giant-gguf) | ~2.2 GB | Feature mode only; no classifier head |
+| small (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-small-gguf` | ~50 MB | Feature mode only; no classifier head |
+| base (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-base-gguf` | ~180 MB | Feature mode only; no classifier head |
+| large (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-large-gguf` | ~620 MB | Feature mode only; no classifier head |
+| giant (backbone, no registers) | `dinov2-cpp-core/dinov2-backbone-giant-gguf` | ~2.2 GB | Feature mode only; no classifier head |
+| small (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-small-gguf` | ~50 MB | Feature mode only; no classifier head |
+| base (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-base-gguf` | ~180 MB | Feature mode only; no classifier head |
+| large (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-large-gguf` | ~620 MB | Feature mode only; no classifier head |
+| giant (backbone, registers) | `dinov2-cpp-core/dinov2-backbone-with-registers-giant-gguf` | ~2.2 GB | Feature mode only; no classifier head |
 
 For patch and dense feature workflows, the register-token variants are the recommended starting point. In the settings studied in [Vision Transformers Need Registers](https://arxiv.org/abs/2309.16588), register tokens reduce high-norm patch-token artifacts and produce smoother local feature and attention maps. Use them with `--print-patch-tokens`, PCA, dense features, and object discovery. This is not a universal accuracy claim: the official [DINOv2 results](https://github.com/facebookresearch/dinov2/blob/main/README.md) show classification and retrieval results that depend on the task and model size. Choose the no-register variant for exact baseline reproduction or task-specific classification and retrieval comparisons.
 
@@ -183,6 +226,7 @@ For patch and dense feature workflows, the register-token variants are the recom
 - [docs/cli.md](docs/cli.md): `dinov2-cli` reference: flags, output modes, embeddings JSON schema, workflows
 - [docs/build.md](docs/build.md): per-device optimizations, quantization
 - [docs/benchmarks.md](docs/benchmarks.md): benchmarks against PyTorch, how to run your own
+- [docs/trust.md](docs/trust.md): the evidence behind the project's claims (nightly parity gate, sanitizer CI, benchmark provenance) and the limits of that evidence
 - [docs/hf-publishing.md](docs/hf-publishing.md): how CI publishes GGUF weights to Hugging Face
 - [docs/wasm.md](docs/wasm.md): Emscripten/WebAssembly build and browser demo
 - [docs/stability.md](docs/stability.md) + [docs/tiers.md](docs/tiers.md): the compatibility contract and tier policy
