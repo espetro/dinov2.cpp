@@ -167,62 +167,39 @@ std::vector<float> interpolate_pos_embed(const ImgSize       img_size,
                                          const float        *pos_embed_data, // Input data shouldn't be modified
                                          const dino_hparams &hparams) {
     // --- Calculate New Grid Dimensions ---
-    const int h_new           = img_size.height / hparams.patch_size;
-    const int w_new           = img_size.width / hparams.patch_size;
-    const int num_patches_new = h_new * w_new;
+    const int     h_new           = img_size.height / (int)hparams.patch_size;
+    const int     w_new           = img_size.width / (int)hparams.patch_size;
+    const int64_t num_patches_new = (int64_t)h_new * w_new;
 
     // --- Calculate Original Grid Dimensions ---
-    const int M                = hparams.n_img_embd(); // Original grid side length
-    const int h_orig           = M;
-    const int w_orig           = M;
-    const int num_patches_orig = h_orig * w_orig;     // N = M*M
-    const int hidden_sz        = hparams.hidden_size; // Alias for clarity
+    // The loader guarantees the stored table is a square [M*M + 1, hidden]
+    // grid with M = img_size/patch_size (embeddings.position_embeddings shape
+    // check), so the source grid side is n_img_embd().
+    const int M         = (int)hparams.n_img_embd();
+    const int hidden_sz = (int)hparams.hidden_size;
 
     // --- Early Return Check ---
-    if (num_patches_new == num_patches_orig) {
-        const size_t total_elements = (size_t)(num_patches_orig + 1) * hidden_sz;
+    // Only an exact grid match may skip interpolation: an equal patch count
+    // under a different aspect still needs resampling.
+    if (h_new == M && w_new == M) {
+        const size_t total_elements = (size_t)(M * M + 1) * hidden_sz;
         return {pos_embed_data, pos_embed_data + total_elements};
     }
 
     // --- Prepare Output Vector ---
-    const size_t       total_elements_new = (size_t)(num_patches_new + 1) * hidden_sz;
-    std::vector<float> pos_embed_new(total_elements_new);
+    std::vector<float> pos_embed_new((size_t)(num_patches_new + 1) * hidden_sz);
 
     // --- Step 1: Copy CLS token embedding directly ---
-    // The first hidden_sz elements are the CLS token.
     std::copy(pos_embed_data, pos_embed_data + hidden_sz, pos_embed_new.data());
 
-    // --- Step 2: Interpolate Patch Embeddings (Dimension by Dimension) ---
-    // Although data is [N, H], we process H slices of [N] shaped spatially.
-    for (int c = 0; c < hidden_sz; ++c) {
-        // Create a 2D grid for the *original* patches for the current hidden dimension 'c'.
-        std::vector<float> src_grid((size_t)h_orig * w_orig);
-
-        // Gather data for the c-th dimension from all original patches.
-        for (int i = 0; i < num_patches_orig; ++i) {
-            const int y_orig = i / w_orig;
-            const int x_orig = i % w_orig;
-
-            // Index for the c-th component of the i-th patch embedding.
-            // (i+1) because the first "row" (index 0) is the CLS token.
-            size_t input_idx                           = (size_t)(i + 1) * hidden_sz + c;
-            src_grid[(size_t)y_orig * w_orig + x_orig] = pos_embed_data[input_idx];
-        }
-
-        // Resize the 2D grid for the current dimension.
-        std::vector<float> dst_grid = resize_bicubic_f32(src_grid.data(), w_orig, h_orig, w_new, h_new);
-
-        // Scatter the interpolated data back into the new embedding vector.
-        for (int i = 0; i < num_patches_new; ++i) {
-            const int y_new = i / w_new;
-            const int x_new = i % w_new;
-
-            // Index for the c-th component of the i-th *new* patch embedding.
-            // (i+1) because the first "row" (index 0) is the CLS token.
-            size_t output_idx         = (size_t)(i + 1) * hidden_sz + c;
-            pos_embed_new[output_idx] = dst_grid[(size_t)y_new * w_new + x_new];
-        }
-    }
+    // --- Step 2: Interpolate Patch Embeddings ---
+    // The patch rows are a [M*M, hidden] row-major block, which is exactly
+    // the interleaved-channel layout resize_planes expects, so one call with
+    // channels = hidden replaces the old per-channel gather/resize/scatter.
+    // TODO: honor hparams.interpolation when GGUFs carry that key (the
+    // converter does not write it today); only bicubic is implemented.
+    std::vector<float> patches = resize_planes(pos_embed_data + hidden_sz, M, M, w_new, h_new, hidden_sz);
+    std::copy(patches.begin(), patches.end(), pos_embed_new.data() + hidden_sz);
 
     return pos_embed_new;
 }

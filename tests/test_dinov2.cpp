@@ -335,6 +335,50 @@ TEST_CASE("interpolate_pos_embed: output size when grid differs") {
     }
 }
 
+TEST_CASE("interpolate_pos_embed: equal patch count with different aspect still interpolates") {
+    // 16x16 source grid (img_size=224, patch=14). A 448x112 request is a
+    // 32x8 grid: same 256 patches but a different aspect, so the table must
+    // be resampled, not returned verbatim.
+    dino_hparams h;
+    h.hidden_size = 8;
+    h.img_size    = 224;
+    h.patch_size  = 14;
+
+    constexpr int M        = 16;
+    constexpr int hidden   = 8;
+    const int     in_rows  = M * M + 1;
+    const int     w_new    = 32;
+    const int     h_new    = 8;
+    const int     out_rows = w_new * h_new + 1;
+
+    std::vector<float> pos_embed((size_t)in_rows * hidden);
+    for (int r = 0; r < in_rows; ++r) {
+        for (int c = 0; c < hidden; ++c) {
+            pos_embed[(size_t)r * hidden + c] = (float)r + (float)c * 0.25f;
+        }
+    }
+
+    const auto out = interpolate_pos_embed({w_new * 14, h_new * 14}, pos_embed.data(), h);
+
+    REQUIRE(out.size() == (size_t)out_rows * hidden);
+    // same patch count, so the size matches the input, but the content must
+    // not be an identity copy
+    REQUIRE(out.size() == pos_embed.size());
+    CHECK(out != pos_embed);
+
+    // CLS row is preserved verbatim
+    for (int c = 0; c < hidden; ++c) {
+        CHECK(out[(size_t)c] == doctest::Approx((float)c * 0.25f));
+    }
+
+    // the patch block equals one interleaved resize_planes call on the
+    // [patch, hidden] row-major source
+    const std::vector<float> expected = resize_planes(pos_embed.data() + hidden, M, M, w_new, h_new, hidden);
+    for (size_t i = 0; i < expected.size(); ++i) {
+        CHECK(out[(size_t)hidden + i] == doctest::Approx(expected[i]));
+    }
+}
+
 TEST_CASE("dino_preprocess: pads non-aligned input to next patch-multiple") {
     // 100x50 input with patch_size=14:
     //   new_w = (100/14 + 1) * 14 = 8 * 14 = 112

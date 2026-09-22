@@ -20,6 +20,10 @@ Image load_image(const std::string &path);
 // Write an 8-bit RGB image to disk as PNG.
 void write_png(const std::string &path, const Image &img);
 
+// Bicubic (Catmull-Rom, matching OpenCV INTER_CUBIC) resize of a multi-channel
+// float image in interleaved layout: src is sw*sh pixels of `channels` values.
+std::vector<float> resize_planes(const float *src, int sw, int sh, int dw, int dh, int channels);
+
 // Bicubic (Catmull-Rom, matching OpenCV INTER_CUBIC) resize of a single-channel
 // float plane.
 std::vector<float> resize_bicubic_f32(const float *src, int sw, int sh, int dw, int dh);
