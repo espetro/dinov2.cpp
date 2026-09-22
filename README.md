@@ -9,7 +9,7 @@ Run DINOv2 vision models in pure C++ on ggml. No Python, no PyTorch, no system d
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg)
 
-**Latest release: [v0.3.0](https://github.com/espetro/dinov2.cpp/releases/tag/v0.3.0)**
+**See the [GitHub releases page](https://github.com/espetro/dinov2.cpp/releases/latest) for the latest prebuilt binaries.**
 
 **Release post & benchmarks → https://alexlavaee.me/projects/dinov2cpp/**
 
@@ -30,12 +30,16 @@ Grab a prebuilt binary, download a weight, run one command. No toolchain needed.
 **1. Install a prebuilt binary** from [releases](https://github.com/espetro/dinov2.cpp/releases):
 
 ```bash
-# macOS (Apple Silicon)
-curl -LO https://github.com/espetro/dinov2.cpp/releases/download/v0.1.0/dinov2-v0.1.0-bin-macos-arm64.tar.gz
-tar xzf dinov2-v0.1.0-bin-macos-arm64.tar.gz
+# Resolve the latest release tag (tarball names embed it)
+TAG=$(basename "$(curl -sIL -o /dev/null -w '%{url_effective}' https://github.com/espetro/dinov2.cpp/releases/latest)")
 
-# Linux x64 / arm64: dinov2-v0.1.0-bin-ubuntu-x64.tar.gz / dinov2-v0.1.0-bin-ubuntu-arm64.tar.gz
-# Windows: dinov2-bin-win-cpu-x64.zip
+# macOS (Apple Silicon)
+curl -LO "https://github.com/espetro/dinov2.cpp/releases/download/$TAG/dinov2-$TAG-bin-macos-arm64.tar.gz"
+tar xzf "dinov2-$TAG-bin-macos-arm64.tar.gz"
+
+# Linux x64 / arm64: dinov2-$TAG-bin-ubuntu-x64.tar.gz / dinov2-$TAG-bin-ubuntu-arm64.tar.gz
+# Windows (version-stable asset name):
+#   https://github.com/espetro/dinov2.cpp/releases/latest/download/dinov2-bin-win-cpu-x64.zip
 ```
 
 **2. Download a GGUF weight:**

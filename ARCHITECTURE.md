@@ -66,7 +66,7 @@ graph LR
     Tool["scripts/bench.sh<br/>scripts/dinov2-to-gguf.py<br/>scripts/publish-gguf.sh"]
     Build["CMakeLists.txt<br/>CMakePresets.json<br/>src/stb_image.h<br/>src/stb_image_write.h<br/>src/doctest.h"]
     CI[".github/workflows/release.yml<br/>.github/workflows/build.yml<br/>.github/workflows/convert-and-publish-gguf.yml"]
-    Doc["README.md<br/>CONTRIBUTING.md<br/>docs/cli.md<br/>docs/build.md<br/>docs/benchmarks.md<br/>docs/hf-publishing.md<br/>ARCHITECTURE.md<br/>RELEASE_NOTES_v0.2.0.md<br/>RELEASE_NOTES_v0.3.0.md"]
+    Doc["README.md<br/>CONTRIBUTING.md<br/>docs/cli.md<br/>docs/build.md<br/>docs/benchmarks.md<br/>docs/hf-publishing.md<br/>ARCHITECTURE.md<br/>CHANGELOG.md"]
     Asset["assets/logo/<br/>assets/tench.jpg<br/>assets/logo.png"]
     Sub["ggml/ (submodule)"]
 
@@ -301,9 +301,9 @@ gone as of v0.3.0):
 
 | Platform    | Asset                                     |
 |:------------|:------------------------------------------|
-| macOS arm64 | `dinov2-v0.3.0-bin-macos-arm64.tar.gz`    |
-| Linux x64   | `dinov2-v0.3.0-bin-ubuntu-x64.tar.gz`     |
-| Linux arm64 | `dinov2-v0.3.0-bin-ubuntu-arm64.tar.gz`   |
+| macOS arm64 | `dinov2-<TAG>-bin-macos-arm64.tar.gz`     |
+| Linux x64   | `dinov2-<TAG>-bin-ubuntu-x64.tar.gz`      |
+| Linux arm64 | `dinov2-<TAG>-bin-ubuntu-arm64.tar.gz`    |
 | Windows x64 | `dinov2-bin-win-cpu-x64.zip` (contains `.exe`) |
 
 The `release` aggregation job downloads all four artifacts, runs `sha256sum`
@@ -336,5 +336,5 @@ Deliberately untracked by `.gitignore` and not in release archives:
 - [docs/hf-publishing.md](docs/hf-publishing.md): `HF_TOKEN` setup, the
   `convert-and-publish-gguf` workflow, the 8 published HF repos.
 - [README.md](README.md): quickstart, downloads, why this fork exists.
-- [RELEASE_NOTES_v0.3.0.md](RELEASE_NOTES_v0.3.0.md): breaking changes
-  (`inference` → `dinov2-cli`, `quantize` removed), upgrade notes.
+- [GitHub releases](https://github.com/espetro/dinov2.cpp/releases): per-tag
+  release notes, breaking changes, and upgrade notes.

@@ -46,7 +46,7 @@ retrieval context, see the official [DINOv2 results](https://github.com/facebook
 
 ## Flags
 
-Adapted from `dinov2-cli --help` (v0.4.0); see `--help` for the exact
+Adapted from `dinov2-cli --help`; run `--help` on your build for the exact
 wording. Flags that take a value read it from the next argument.
 
 | Flag | Default | Effect |
