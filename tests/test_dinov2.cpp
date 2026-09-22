@@ -335,6 +335,50 @@ TEST_CASE("interpolate_pos_embed: output size when grid differs") {
     }
 }
 
+TEST_CASE("interpolate_pos_embed: equal patch count with different aspect still interpolates") {
+    // 16x16 source grid (img_size=224, patch=14). A 448x112 request is a
+    // 32x8 grid: same 256 patches but a different aspect, so the table must
+    // be resampled, not returned verbatim.
+    dino_hparams h;
+    h.hidden_size = 8;
+    h.img_size    = 224;
+    h.patch_size  = 14;
+
+    constexpr int M        = 16;
+    constexpr int hidden   = 8;
+    const int     in_rows  = M * M + 1;
+    const int     w_new    = 32;
+    const int     h_new    = 8;
+    const int     out_rows = w_new * h_new + 1;
+
+    std::vector<float> pos_embed((size_t)in_rows * hidden);
+    for (int r = 0; r < in_rows; ++r) {
+        for (int c = 0; c < hidden; ++c) {
+            pos_embed[(size_t)r * hidden + c] = (float)r + (float)c * 0.25f;
+        }
+    }
+
+    const auto out = interpolate_pos_embed({w_new * 14, h_new * 14}, pos_embed.data(), h);
+
+    REQUIRE(out.size() == (size_t)out_rows * hidden);
+    // same patch count, so the size matches the input, but the content must
+    // not be an identity copy
+    REQUIRE(out.size() == pos_embed.size());
+    CHECK(out != pos_embed);
+
+    // CLS row is preserved verbatim
+    for (int c = 0; c < hidden; ++c) {
+        CHECK(out[(size_t)c] == doctest::Approx((float)c * 0.25f));
+    }
+
+    // the patch block equals one interleaved resize_planes call on the
+    // [patch, hidden] row-major source
+    const std::vector<float> expected = resize_planes(pos_embed.data() + hidden, M, M, w_new, h_new, hidden);
+    for (size_t i = 0; i < expected.size(); ++i) {
+        CHECK(out[(size_t)hidden + i] == doctest::Approx(expected[i]));
+    }
+}
+
 TEST_CASE("dino_preprocess: pads non-aligned input to next patch-multiple") {
     // 100x50 input with patch_size=14:
     //   new_w = (100/14 + 1) * 14 = 8 * 14 = 112
@@ -1023,6 +1067,81 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attentio
         CHECK(batch[1].preds == single1[0].preds);
         CHECK(batch[0].pred_scores == single0[0].pred_scores);
         CHECK(batch[1].pred_scores == single1[0].pred_scores);
+    }
+}
+
+TEST_CASE("dino_predict: flash attention matches the non-flash path") {
+    // Regression net for the K/V zero-padding bug: padded keys used to enter
+    // the softmax with logit 0 and their zero V rows diluted the numerator,
+    // so -fa outputs drifted from the reference path. The KV seq dim is no
+    // longer padded, so both paths must agree within float tolerance.
+    ImageF img = make_test_image(8, 8, 1);
+
+    const auto max_abs_diff = [](const std::optional<std::vector<float>> &a,
+                                 const std::optional<std::vector<float>> &b) {
+        REQUIRE(a.has_value());
+        REQUIRE(b.has_value());
+        REQUIRE(a->size() == b->size());
+        float worst = 0.0f;
+        for (size_t i = 0; i < a->size(); ++i) {
+            worst = std::max(worst, std::fabs((*a)[i] - (*b)[i]));
+        }
+        return worst;
+    };
+
+    SUBCASE("no register tokens") {
+        TinyModel m(/*n_registers=*/0);
+
+        dino_params plain;
+        dino_params flash;
+        flash.enable_flash_attn = true;
+
+        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, m.allocr);
+        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, m.allocr);
+        REQUIRE(ref.size() == 1);
+        REQUIRE(fa.size() == 1);
+
+        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].pooled, fa[0].pooled) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].patch_tokens, fa[0].patch_tokens) < 1e-5f);
+    }
+
+    SUBCASE("with register tokens") {
+        TinyModel m(/*n_registers=*/2);
+
+        dino_params plain;
+        dino_params flash;
+        flash.enable_flash_attn = true;
+
+        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, m.allocr);
+        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, m.allocr);
+        REQUIRE(ref.size() == 1);
+        REQUIRE(fa.size() == 1);
+
+        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].pooled, fa[0].pooled) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].patch_tokens, fa[0].patch_tokens) < 1e-5f);
+    }
+
+    SUBCASE("classify") {
+        TinyModel m(/*n_registers=*/0);
+
+        dino_params plain;
+        plain.classify          = true;
+        plain.topk              = 3;
+        dino_params flash       = plain;
+        flash.enable_flash_attn = true;
+
+        const auto ref = dino_predict(m.model, std::vector<ImageF>{img}, plain, m.allocr);
+        const auto fa  = dino_predict(m.model, std::vector<ImageF>{img}, flash, m.allocr);
+        REQUIRE(ref.size() == 1);
+        REQUIRE(fa.size() == 1);
+
+        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < 1e-5f);
+        REQUIRE(ref[0].preds.has_value());
+        REQUIRE(fa[0].preds.has_value());
+        CHECK(ref[0].preds == fa[0].preds);
+        CHECK(max_abs_diff(ref[0].pred_scores, fa[0].pred_scores) < 1e-5f);
     }
 }
 

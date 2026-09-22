@@ -33,7 +33,7 @@ Model:
 
 Input:
   -i FNAME, --inp       input image file (default: ../assets/tench.jpg)
-  -s N, --seed          RNG seed (default: 42)
+  -s N, --seed          accepted for compatibility; has no effect (default: 42)
 
 Output modes:
   -c, --classify        classify the image and print top-k labels (default: off)
@@ -89,7 +89,7 @@ Quantized GGUFs (q4_0, q4_1, q5_0, q5_1, q8_0) are not produced by this
 repo. They are downloaded from [`dinov2-cpp-core/<variant>-gguf`](https://huggingface.co/dinov2-cpp-core)
 on Hugging Face, which publishes them via the
 `convert-and-publish-gguf` workflow. The pre-built `dinov2-cli` binary
-loads any ggml-supported quant type transparently — pass any of those
+loads any ggml-supported quant type transparently; pass any of those
 GGUFs as `-m`.
 
 ## Benchmarks
@@ -116,7 +116,7 @@ Flags: `--models <csv>` (default `small,base,large,giant`), `--repeats <N>`
 (concatenate per-platform tables).
 Pre-stage GGUFs under `models/dinov2-vit-{size}-patch14/model.gguf` first;
 the script will exit with a clear error if a model is missing. Only f16
-GGUFs are supported as input — pull pre-quantized variants from
+GGUFs are supported as input; pull pre-quantized variants from
 [`dinov2-cpp-core/<variant>-gguf`](https://huggingface.co/dinov2-cpp-core)
 directly.
 

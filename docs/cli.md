@@ -55,7 +55,7 @@ wording. Flags that take a value read it from the next argument.
 | `-fa`, `--flash_attn` | off | enable flash attention, less accurate |
 | `-t N`, `--threads` | `min(4, hardware_concurrency)` | threads used during computation |
 | `-i FNAME`, `--inp` | `../assets/tench.jpg` | input image file; repeat or comma-separate for several |
-| `-s N`, `--seed` | 42 | RNG seed |
+| `-s N`, `--seed` | 42 | accepted for compatibility; has no effect |
 | `--batch N` | 1 | max images per forward pass (max 64); inputs run in chunks of N |
 | `--preprocess MODE` | `bounded` | feature-mode preprocessing: `bounded` (shortest edge capped at 518), `hf` (shortest edge 256 + center crop 224), `crop518` (shortest edge 518 + center crop 518, fixed grid) |
 | `--no-resize` | off | keep native resolution under `--preprocess bounded` (still capped by `--max-tokens`) |
@@ -90,12 +90,13 @@ CLI prints a hint and exits 1.
   own bench output instead. `--print-patch-tokens` adds a `patches`
   field; `--l2-normalize` normalizes the vectors.
 - **PCA visualization** (`-o FNAME`): writes a PNG of the patch features
-  projected to RGB. Feature mode only; ignored under `-c` and `--bench`.
+  projected to RGB. Feature mode only; combining it with `-c` is a
+  parse-time error, and the `--bench` loop skips it.
   With a single input FNAME is the exact output path. With multiple
   inputs FNAME is a directory (created if missing) and each image
-  writes `<input-stem>.pca.png` inside it; two inputs sharing a stem
-  overwrite each other. The writer emits PNG bytes regardless of the
-  file extension.
+  writes `<index>-<input-stem>.pca.png` inside it, so inputs that share
+  a filename stem cannot collide. The writer emits PNG bytes regardless
+  of the file extension.
 - **Bench** (`--bench*`): warmup runs plus timed runs of the forward
   pass; each run processes every input image in chunks of `--batch`.
   `--bench-json` prints one JSON object on stdout; without it a
@@ -373,13 +374,13 @@ reshape to `(n_patches, hidden)` for per-patch features, or to the
 
 ```bash
 dinov2-cli -m models/model.gguf -i assets/tench.jpg -o pca.png
-dinov2-cli -m models/model.gguf -i a.jpg -i b.jpg -o pca/  # -> pca/a.pca.png, pca/b.pca.png
+dinov2-cli -m models/model.gguf -i a.jpg -i b.jpg -o pca/  # -> pca/0-a.pca.png, pca/1-b.pca.png
 ```
 
-Feature mode only; the flag is ignored under `-c` and `--bench`. With
-multiple inputs `-o` names a directory (created if missing) that gets
-one `<input-stem>.pca.png` per image. Output is PNG bytes whatever the
-extension, so use `.png`.
+Feature mode only; `-c` rejects `-o` at parse time and `--bench` skips
+it. With multiple inputs `-o` names a directory (created if missing)
+that gets one `<index>-<input-stem>.pca.png` per image. Output is PNG
+bytes whatever the extension, so use `.png`.
 
 ### Bench
 

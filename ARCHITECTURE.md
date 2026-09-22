@@ -141,28 +141,37 @@ usage: ./bin/dinov2-cli [options]
 Model:
   -m FNAME, --model     model path (default: ../model.gguf)
   -fa, --flash_attn     enable flash attention, less accurate (default: off)
-  -t N, --threads       number of threads to use during computation (default: 4)
+  -t N, --threads       number of threads to use during computation, 1 or greater (default: 4)
 
 Input:
   -i FNAME, --inp       input image file; repeat or comma-separate for several
                         (default: ../assets/tench.jpg)
-  -s N, --seed          RNG seed (default: 42)
+  -s N, --seed          accepted for compatibility; has no effect (default: 42)
   --batch N             max images per forward pass; inputs run in chunks of N
                         (default: 1, max: 64)
 
+Preprocessing (feature mode only; rejected with -c):
+  --preprocess MODE     bounded (default): resize shortest edge to 518 when larger;
+                        hf: shortest edge 256 + center crop 224 (HF recipe);
+                        crop518: shortest edge 518 + center crop 518 (fixed 37x37 grid)
+  --no-resize           bounded mode: keep native resolution (still capped)
+  --max-tokens N        hard cap on patch tokens per image, 0 disables
+                        (default: 4 * (518/patch)^2 from the model's patch size)
+
 Output modes:
   -c, --classify        classify each input image and print top-k labels (default: off)
-  -k N, --topk          top k classes to print (default: 5)
+  -k N, --topk          top k classes to print, 1 through model class count (default: 5)
   --print-embeddings    emit embeddings JSON on stdout, one object per input image (JSONL)
-  --print-patch-tokens  include per-patch token vectors in the JSON output
+  --embeddings-binary   write preview binary embeddings to -o (unstable format)
+  --print-patch-tokens  include per-patch token vectors in the embedding output
   --l2-normalize        L2-normalize emitted embedding vectors
-  -o FNAME, --out       write PCA visualization of patch features to FNAME; with multiple
-                        inputs FNAME is a directory for <input-stem>.pca.png files
+  -o FNAME, --out       write PCA output to FNAME, or binary embeddings file/directory
+                        output when used with --embeddings-binary
 
 Benchmark:
   --bench               enable bench loop (default repeats=5, warmup=1); skips PCA image output
-  --bench-runs N        number of timed runs (overrides default 5 when --bench is set)
-  --bench-warmup N      number of warmup runs discarded before timing (default: 1)
+  --bench-runs N        number of timed runs, 1 or greater (overrides default 5 when --bench is set)
+  --bench-warmup N      number of warmup runs, 0 or greater (default: 1)
   --bench-json          emit one JSON object per line to stdout instead of markdown row
 
 Misc:
@@ -198,13 +207,13 @@ flowchart TD
     cleanup --> exit([return 0])
 ```
 
-Every flag maps to one `dino_params` field (`dinov2.h:67-88`).
+Every flag maps to one `dino_params` field (`dinov2.h:84-111`).
 `--print-embeddings` and `--bench-json` are the stable machine-readable
 outputs; `scripts/bench.sh` parses `--bench-json` lines one by one.
 
 ## Public API surface
 
-Verbatim from `dinov2.h` (the entire 120-line public surface):
+Condensed from `dinov2.h` (`...` elides parameter lists and comments):
 
 ```c++
 struct ImgSize { int width = 0; int height = 0; };
@@ -218,9 +227,10 @@ const char *get_val_str(const struct gguf_context *ctx, const char *key);
 void l2_normalize(std::vector<float> &v);
 
 struct dino_hparams {
-    uint32_t hidden_size, num_hidden_layers, num_attention_heads;
-    uint32_t num_classes, num_register_tokens, patch_size, img_size;
-    uint32_t ftype; float eps; std::string interpolation;
+    uint32_t hidden_size = 768, num_hidden_layers = 12, num_attention_heads = 12;
+    uint32_t num_classes = 1000, num_register_tokens = 0;
+    uint32_t patch_size = 8, img_size = 224, ftype = 1;
+    float eps = 1e-6f; std::string interpolation = "bicubic";
     std::map<int, std::string> id2label;
     uint32_t n_enc_head_dim() const, n_img_size() const,
               n_patch_size() const, n_img_embd() const;
@@ -228,28 +238,37 @@ struct dino_hparams {
 
 struct dino_model {
     dino_hparams hparams;
-    struct ggml_context *ctx;
-    ggml_backend_t backend = nullptr;
-    ggml_backend_buffer_t buffer;
+    struct ggml_context *ctx     = nullptr;
+    ggml_backend_t backend       = nullptr;
+    ggml_backend_buffer_t buffer = nullptr;
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
+// --batch bound and feature-mode preprocessing knobs
+constexpr uint32_t DINO_MAX_BATCH = 64;
+constexpr int DINO_FEATURE_SHORT_EDGE = 518;
+enum class dino_preprocess_mode { bounded, hf, crop518 };
+
 struct dino_params {
-    uint32_t seed = 42, topk = 5;
+    int32_t  seed = 42;             // unused: no RNG in inference; kept for API compatibility
+    uint32_t topk = 5;
     uint32_t n_batch = 1;           // max images per forward pass (--batch)
     bool enable_flash_attn = false;
     uint32_t n_threads = std::min(4u, std::thread::hardware_concurrency());
     bool classify = false;
     bool print_embeddings = false;
+    bool embeddings_binary = false;
     bool print_patch_tokens = false;
     bool l2_normalize = false;
     std::string model = "../model.gguf";
     std::vector<std::string> fnames_inp = {"../assets/tench.jpg"};
-    std::string image_out = "";     // PCA visualization is opt-in via -o
-    float eps = 1e-6f;
+    std::string image_out = "";     // PCA/binary output is opt-in via -o
     uint32_t bench_repeats = 0;     // --bench default: 5
     uint32_t bench_warmup = 1;
     bool bench_json = false;
+    dino_preprocess_mode preprocess_mode = dino_preprocess_mode::bounded;
+    bool no_resize = false;
+    int64_t max_tokens = -1;        // -1: default cap; 0 disables
 };
 
 // encoder graph
@@ -266,6 +285,10 @@ struct dino_output {
 
 ImageF dino_classify_preprocess(const Image &img, const dino_hparams &params);
 ImageF dino_preprocess(const Image &img, const dino_hparams &params);
+ImageF dino_feature_preprocess(const Image &img, const dino_hparams &hparams,
+                               const dino_params &params);
+ImgSize dino_feature_output_size(const Image &img, const dino_hparams &hparams,
+                                 const dino_params &params);
 
 bool dino_model_load(ImgSize img_size, const std::string &fname,
                      dino_model &model, const dino_params &params);
@@ -275,7 +298,8 @@ std::vector<float> interpolate_pos_embed(ImgSize img_size,
                                          const dino_hparams &hparams);
 
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph,
-                                const dino_model &model, const dino_params &params);
+                                const dino_model &model, const dino_params &params,
+                                size_t graph_size);
 
 // batch form: 1..n_batch same-dims images -> one output per image
 std::vector<dino_output> dino_predict(const dino_model &model,
@@ -286,11 +310,12 @@ std::unique_ptr<dino_output> dino_predict(const dino_model &model, const ImageF 
                                           const dino_params &params, ggml_gallocr_t allocr);
 
 void print_usage(FILE *out, int argc, char **argv, const dino_params &params);
+bool write_embeddings_binary(const std::string &path, const dino_output &output, ...);
 bool dino_params_parse(int argc, char **argv, dino_params &params);
 ```
 
 `dinov2.h` includes `ggml.h` and `src/image.h` so callers transitively pick up
-ggml's types and `Image` / `ImageF`. There are no `extern "C"` exports — this
+ggml's types and `Image` / `ImageF`. There are no `extern "C"` exports; this
 is C++, consumed by the CLI shell in the same translation-unit set.
 
 ## What ships per release
@@ -314,14 +339,14 @@ GitHub Release.
 
 Deliberately untracked by `.gitignore` and not in release archives:
 
-- `build/`, `build-*/`, `cmake-build-debug/` — local CMake output.
-- `.venv/`, `.venv-publish/` — per-run converter venv (created by `publish-gguf.sh`).
-- `*.gguf`, `/models`, `/data` — pre-converted weights live on HF; users pull
+- `build/`, `build-*/`, `cmake-build-debug/`: local CMake output.
+- `.venv/`, `.venv-publish/`: per-run converter venv (created by `publish-gguf.sh`).
+- `*.gguf`, `/models`, `/data`: pre-converted weights live on HF; users pull
   them with `hf download`.
-- `.agents/` — agent working notes (memory + plans); force-added per global
+- `.agents/`: agent working notes (memory + plans); force-added per global
   AGENTS.md policy but not in release tarballs.
-- `.publish-logs/` — per-run audit trail from `publish-gguf.sh`.
-- `.DS_Store`, `.env` — OS + local secrets.
+- `.publish-logs/`: per-run audit trail from `publish-gguf.sh`.
+- `.DS_Store`, `.env`: OS + local secrets.
 
 ## Where to read next
 

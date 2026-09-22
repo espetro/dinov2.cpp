@@ -52,9 +52,9 @@ struct dino_hparams {
 
 struct dino_model {
     dino_hparams                                hparams;
-    struct ggml_context                        *ctx;
+    struct ggml_context                        *ctx     = nullptr;
     ggml_backend_t                              backend = nullptr;
-    ggml_backend_buffer_t                       buffer;
+    ggml_backend_buffer_t                       buffer  = nullptr;
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
@@ -82,7 +82,7 @@ inline uint64_t dino_default_max_tokens(uint32_t patch_size) {
 }
 
 struct dino_params {
-    int32_t     seed               = 42;
+    int32_t     seed               = 42; // unused: no RNG in inference; kept for API compatibility
     uint32_t    topk               = 5;
     uint32_t    n_batch            = 1; // max images per forward pass
     bool        enable_flash_attn  = false;
@@ -96,8 +96,7 @@ struct dino_params {
     // input image paths; -i repeats or comma-separates to add more than one.
     // Images are forwarded to dino_predict in chunks of n_batch.
     std::vector<std::string> fnames_inp = {"../assets/tench.jpg"};
-    std::string              image_out  = "";    // output of pca visualization (if used; a directory for multi-input)
-    float                    eps        = 1e-6f; // epsilon used in LN
+    std::string              image_out  = ""; // output of pca visualization (if used; a directory for multi-input)
     // Benchmark controls. bench_repeats=0 disables the bench loop (legacy single-shot path).
     // --bench with no count sets bench_repeats to 5 (the default for one-shot "is it faster").
     uint32_t bench_repeats = 0;
@@ -150,8 +149,10 @@ bool dino_model_load(ImgSize img_size, const std::string &fname, dino_model &mod
 
 std::vector<float> interpolate_pos_embed(ImgSize img_size, const float *pos_embed_data, const dino_hparams &hparams);
 
+// graph_size is the cgraph node capacity; it must cover every node the
+// encoder emits (see dino_predict for the per-layer sizing expression).
 struct ggml_cgraph *build_graph(ImgSize img_size, struct ggml_context *ctx_cgraph, const dino_model &model,
-                                const dino_params &params);
+                                const dino_params &params, size_t graph_size);
 
 // Batch inference: runs the model on up to params.n_batch preprocessed images
 // and returns one dino_output per image, in input order. All images must share

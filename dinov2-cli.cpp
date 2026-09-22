@@ -76,17 +76,8 @@ static void print_float_array(const std::vector<float> &v) {
     }
 }
 
-// Per-image PCA output path for multi-input runs: <out_dir>/<input-stem>.pca.png.
-static std::string pca_out_path(const std::string &out_dir, const std::string &input_path) {
-    const std::string stem = std::filesystem::path(input_path).stem().string();
-    return (std::filesystem::path(out_dir) / (stem + ".pca.png")).string();
-}
-
-static std::string binary_out_path(const std::string &out_path, const std::string &input_path, size_t index,
-                                   bool single_input) {
-    if (single_input) {
-        return out_path;
-    }
+// Filesystem-safe stem of an input path for per-image output names.
+static std::string sanitized_stem(const std::string &input_path) {
     std::string stem = std::filesystem::path(input_path).stem().string();
     for (char &c : stem) {
         if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_') {
@@ -96,7 +87,23 @@ static std::string binary_out_path(const std::string &out_path, const std::strin
     if (stem.empty()) {
         stem = "input";
     }
-    return (std::filesystem::path(out_path) / (std::to_string(index) + "-" + stem + ".d2e")).string();
+    return stem;
+}
+
+// Per-image PCA output path for multi-input runs: <out_dir>/<index>-<input-stem>.pca.png.
+// The index disambiguates inputs that share a filename stem (a/x.png, b/x.png).
+static std::string pca_out_path(const std::string &out_dir, const std::string &input_path, size_t index) {
+    return (std::filesystem::path(out_dir) / (std::to_string(index) + "-" + sanitized_stem(input_path) + ".pca.png"))
+        .string();
+}
+
+static std::string binary_out_path(const std::string &out_path, const std::string &input_path, size_t index,
+                                   bool single_input) {
+    if (single_input) {
+        return out_path;
+    }
+    return (std::filesystem::path(out_path) / (std::to_string(index) + "-" + sanitized_stem(input_path) + ".d2e"))
+        .string();
 }
 
 // Emit one JSON object on stdout with whatever output fields are set:
@@ -179,8 +186,6 @@ int main(int argc, char **argv) {
                 __func__);
         return 1;
     }
-
-    fprintf(stderr, "%s: seed = %d\n", __func__, params.seed);
 
     // load every input image
     std::vector<Image> imgs;
@@ -359,7 +364,7 @@ int main(int argc, char **argv) {
                     if (!params.embeddings_binary && !params.classify && output.patch_tokens &&
                         !params.image_out.empty()) {
                         const std::string out_path   = params.fnames_inp.size() > 1
-                                                           ? pca_out_path(params.image_out, image_path)
+                                                           ? pca_out_path(params.image_out, image_path, idx)
                                                            : params.image_out;
                         const int         patch_size = model.hparams.patch_size;
                         const int         out_w      = imgs_f[idx].nx;
