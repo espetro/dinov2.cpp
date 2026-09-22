@@ -45,21 +45,28 @@ uint32_t dino_hparams::n_img_embd() const {
     return n_img_size() / n_patch_size();
 }
 
+// These getters never trip gguf's internal asserts on malformed files: a
+// missing key or a key carrying an unexpected GGUF type yields 0/NULL
+// instead of aborting.
 uint32_t get_val_u32(const struct gguf_context *ctx, const char *key) {
     const int64_t key_id = gguf_find_key(ctx, key);
-    assert(key_id >= 0);
+    if (key_id < 0 || gguf_get_kv_type(ctx, key_id) != GGUF_TYPE_UINT32) {
+        return 0;
+    }
     return gguf_get_val_u32(ctx, key_id);
 }
 
 const char *get_val_str(const struct gguf_context *ctx, const char *key) {
     const int64_t key_id = gguf_find_key(ctx, key);
-    assert(key_id >= 0);
+    if (key_id < 0 || gguf_get_kv_type(ctx, key_id) != GGUF_TYPE_STRING) {
+        return nullptr;
+    }
     return gguf_get_val_str(ctx, key_id);
 }
 
 static std::optional<uint32_t> get_val_u32_optional(const struct gguf_context *ctx, const char *key) {
     const int64_t key_id = gguf_find_key(ctx, key);
-    if (key_id < 0) {
+    if (key_id < 0 || gguf_get_kv_type(ctx, key_id) != GGUF_TYPE_UINT32) {
         return std::nullopt;
     }
     return gguf_get_val_u32(ctx, key_id);
@@ -383,11 +390,17 @@ static bool dino_model_load_finish(dino_model &model, const dino_model_options &
     guard.gguf_ctx = gguf_ctx;
     guard.tmp_ctx  = tmp_ctx;
 
-    // required metadata keys fail cleanly instead of aborting inside gguf
+    // required metadata keys fail cleanly instead of aborting inside gguf:
+    // both presence and the GGUF value type are checked before the read
     const auto required_u32 = [&](const char *key, uint32_t &out) {
         const int64_t key_id = gguf_find_key(gguf_ctx, key);
         if (key_id < 0) {
             fprintf(stderr, "error: gguf missing required key '%s'\n", key);
+            return false;
+        }
+        if (gguf_get_kv_type(gguf_ctx, key_id) != GGUF_TYPE_UINT32) {
+            fprintf(stderr, "error: gguf key '%s' has type %s, expected uint32\n", key,
+                    gguf_type_name(gguf_get_kv_type(gguf_ctx, key_id)));
             return false;
         }
         out = gguf_get_val_u32(gguf_ctx, key_id);
@@ -490,12 +503,13 @@ static bool dino_model_load_finish(dino_model &model, const dino_model_options &
         // Read id2label dictionary into an ordered map. A classifier without
         // labels is not safe to present as a classification-capable model.
         for (uint32_t i = 0; i < hparams.num_classes; ++i) {
-            const std::string key = std::to_string(i);
-            if (gguf_find_key(gguf_ctx, key.c_str()) < 0) {
-                fprintf(stderr, "%s: classification GGUF is missing label metadata for class %u\n", fn_name, i);
+            const std::string key   = std::to_string(i);
+            const char       *label = get_val_str(gguf_ctx, key.c_str());
+            if (!label) {
+                fprintf(stderr, "%s: classification GGUF is missing a string label for class %u\n", fn_name, i);
                 return false;
             }
-            model.hparams.id2label[static_cast<int>(i)] = get_val_str(gguf_ctx, key.c_str());
+            model.hparams.id2label[static_cast<int>(i)] = label;
         }
     }
 
@@ -509,9 +523,10 @@ static bool dino_model_load_finish(dino_model &model, const dino_model_options &
     // tolerate gaps so dino_model_label works without the strict preflight
     if (model.has_classifier && !options.require_classifier) {
         for (uint32_t i = 0; i < hparams.num_classes; ++i) {
-            const std::string key = std::to_string(i);
-            if (gguf_find_key(gguf_ctx, key.c_str()) >= 0) {
-                model.hparams.id2label[static_cast<int>(i)] = get_val_str(gguf_ctx, key.c_str());
+            const std::string key   = std::to_string(i);
+            const char       *label = get_val_str(gguf_ctx, key.c_str());
+            if (label) {
+                model.hparams.id2label[static_cast<int>(i)] = label;
             }
         }
     }

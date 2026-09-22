@@ -26,6 +26,8 @@ struct ImgSize {
 constexpr float IMAGENET_DEFAULT_MEAN[3] = {0.485f, 0.456f, 0.406f};
 constexpr float IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
 
+// GGUF metadata getters that fail soft on malformed files: a missing key or
+// an unexpected value type returns 0 / NULL rather than aborting inside gguf.
 uint32_t get_val_u32(const struct gguf_context *ctx, const char *key);
 
 const char *get_val_str(const struct gguf_context *ctx, const char *key);
