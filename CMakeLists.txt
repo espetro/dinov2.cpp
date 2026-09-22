@@ -18,6 +18,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 option(DINOV2_FATAL_WARNINGS "Enable -Wall -Wextra -Wpedantic -Werror (MSVC: /W4 /WX)" OFF)
 option(DINOV2_BUILD_TESTS "Build doctest unit tests" ON)
+option(DINOV2_BUILD_CLI "Build the dinov2-cli executable" ON)
+option(DINOV2_BUILD_C_API "Build the pure C API (include/dinov2.h) into libdinov2" ON)
 
 # deps
 add_subdirectory(ggml)
@@ -50,11 +52,25 @@ function(dinov2_target_flags target)
     endif ()
 endfunction()
 
+# dinov2 library: engine (dinov2.cpp) + image/preprocessing (src/image.cpp).
+# The public C API in include/dinov2.h is compiled in when
+# DINOV2_BUILD_C_API is on; the internal C++ header stays at the repo root
+# and is not installed.
+add_library(dinov2 dinov2.cpp src/image.cpp)
+target_link_libraries(dinov2 PUBLIC ggml)
+target_include_directories(dinov2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+dinov2_target_flags(dinov2)
+if (NOT BUILD_SHARED_LIBS)
+    # consumers of the static library must not see dllimport annotations
+    target_compile_definitions(dinov2 PUBLIC DINO_STATIC)
+endif ()
+
 # dinov2 executable
-add_executable(dinov2-cli dinov2-cli.cpp dinov2.cpp src/image.cpp)
-target_link_libraries(dinov2-cli PUBLIC ggml)
-target_include_directories(dinov2-cli PUBLIC . ${CMAKE_CURRENT_SOURCE_DIR})
-dinov2_target_flags(dinov2-cli)
+if (DINOV2_BUILD_CLI)
+    add_executable(dinov2-cli dinov2-cli.cpp)
+    target_link_libraries(dinov2-cli PRIVATE dinov2)
+    dinov2_target_flags(dinov2-cli)
+endif ()
 
 # tests
 if (DINOV2_BUILD_TESTS)
@@ -65,20 +81,20 @@ if (DINOV2_BUILD_TESTS)
     add_test(NAME test_image COMMAND test_image)
 
     # dinov2 library tests: pure-function coverage for dino_hparams math,
-    # interpolate_pos_embed, dino_preprocess fallback. Links ggml because
-    # interpolate_pos_embed / dino_preprocess don't need it but the test
-    # binary is built against the same source as dinov2-cli for cohesion.
-    add_executable(test_dinov2 tests/test_dinov2.cpp dinov2.cpp src/image.cpp)
-    target_link_libraries(test_dinov2 PUBLIC ggml)
+    # interpolate_pos_embed, dino_preprocess, and dino_predict against the
+    # synthetic TinyModel fixture.
+    add_executable(test_dinov2 tests/test_dinov2.cpp)
+    target_link_libraries(test_dinov2 PRIVATE dinov2)
     target_include_directories(test_dinov2 PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         tests)
     dinov2_target_flags(test_dinov2)
     add_test(NAME test_dinov2 COMMAND test_dinov2)
 
-    add_executable(test_cli tests/test_cli.cpp)
-    target_link_libraries(test_cli PRIVATE ggml)
-    dinov2_target_flags(test_cli)
-    add_test(NAME test_cli COMMAND test_cli $<TARGET_FILE:dinov2-cli>)
+    if (DINOV2_BUILD_CLI)
+        add_executable(test_cli tests/test_cli.cpp)
+        target_link_libraries(test_cli PRIVATE ggml)
+        dinov2_target_flags(test_cli)
+        add_test(NAME test_cli COMMAND test_cli $<TARGET_FILE:dinov2-cli>)
+    endif ()
 endif ()
