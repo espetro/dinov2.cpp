@@ -138,6 +138,11 @@ Opt-in surfaces, off by default and not covered by the stability contract
 | **PyTorch-parity outputs** | CLS + patch embeddings as JSON, matching the reference implementation. |
 | **Cross-platform prebuilts** | macOS arm64, Linux x64/arm64, Windows x64. |
 
+**Limitations:** image decode is vendored stb_image only (JPEG, PNG, BMP,
+TGA; no HEIC, WebP, RAW, or AVIF, convert those first with `sips`,
+`heif-convert`, or `ffmpeg`). Embeddings are image-to-image: this is not
+CLIP and there are no text queries. Classification is ImageNet-1k only.
+
 ## Pre-converted GGUF weights
 
 Ready-to-download f16 GGUF weights, published by CI to the [`dinov2-cpp-core`](https://huggingface.co/dinov2-cpp-core) Hugging Face profile:
