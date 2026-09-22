@@ -814,6 +814,12 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs") {
     copts.n_batch = 2;
     dino_run_options ropts;
 
+    // ggml_flash_attn_ext uses an online softmax with different fp
+    // accumulation order than the reference path; sanitizer builds on
+    // Linux show ~2e-4 max diffs. 1e-3 keeps the padding regression net
+    // (which produced percent-level drift) while tolerating that noise.
+    const float tol = 1e-3f;
+
     SUBCASE("no register tokens") {
         TinyModel m(/*n_registers=*/0);
         m.ctx.options = copts;
@@ -891,6 +897,12 @@ TEST_CASE("dino_predict: batch of 2 equals two single-image runs (flash attentio
     // the flash path pads the sequence to a multiple of 32; the TinyModel
     // seq len (16 patches + 1 cls + registers = 17 or 19) always pads, so
     // these subcases exercise the padded-KV and B>1 unpad-reshape path
+    // ggml_flash_attn_ext uses an online softmax with different fp
+    // accumulation order than the reference path; sanitizer builds on
+    // Linux show ~2e-4 max diffs. 1e-3 keeps the padding regression net
+    // (which produced percent-level drift) while tolerating that noise.
+    const float tol = 1e-3f;
+
     SUBCASE("no register tokens") {
         TinyModel m(/*n_registers=*/0);
         m.ctx.options = copts;
@@ -973,6 +985,12 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
         return worst;
     };
 
+    // ggml_flash_attn_ext uses an online softmax with different fp
+    // accumulation order than the reference path; sanitizer builds on
+    // Linux show ~2e-4 max diffs. 1e-3 keeps the padding regression net
+    // (which produced percent-level drift) while tolerating that noise.
+    const float tol = 1e-3f;
+
     SUBCASE("no register tokens") {
         TinyModel m(/*n_registers=*/0);
 
@@ -985,9 +1003,9 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
-        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < 1e-5f);
-        CHECK(max_abs_diff(ref[0].pooled, fa[0].pooled) < 1e-5f);
-        CHECK(max_abs_diff(ref[0].patch_tokens, fa[0].patch_tokens) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < tol);
+        CHECK(max_abs_diff(ref[0].pooled, fa[0].pooled) < tol);
+        CHECK(max_abs_diff(ref[0].patch_tokens, fa[0].patch_tokens) < tol);
     }
 
     SUBCASE("with register tokens") {
@@ -1002,9 +1020,9 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
-        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < 1e-5f);
-        CHECK(max_abs_diff(ref[0].pooled, fa[0].pooled) < 1e-5f);
-        CHECK(max_abs_diff(ref[0].patch_tokens, fa[0].patch_tokens) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < tol);
+        CHECK(max_abs_diff(ref[0].pooled, fa[0].pooled) < tol);
+        CHECK(max_abs_diff(ref[0].patch_tokens, fa[0].patch_tokens) < tol);
     }
 
     SUBCASE("classify") {
@@ -1021,11 +1039,11 @@ TEST_CASE("dino_predict: flash attention matches the non-flash path") {
         REQUIRE(ref.size() == 1);
         REQUIRE(fa.size() == 1);
 
-        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].cls_token, fa[0].cls_token) < tol);
         REQUIRE(ref[0].preds.has_value());
         REQUIRE(fa[0].preds.has_value());
         CHECK(ref[0].preds == fa[0].preds);
-        CHECK(max_abs_diff(ref[0].pred_scores, fa[0].pred_scores) < 1e-5f);
+        CHECK(max_abs_diff(ref[0].pred_scores, fa[0].pred_scores) < tol);
     }
 }
 
