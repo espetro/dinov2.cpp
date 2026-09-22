@@ -133,3 +133,103 @@ jobs:
         run: |
           bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint -oneline examples/ci-visual-regression/visual-regression.yml
+
+  # End-to-end proof of examples/ci-visual-regression/visual-regression.yml:
+  # materializes baseline/ + screenshots/ from the committed fixtures, then
+  # runs the same release-tarball + cosine-gate steps so the public run log
+  # shows the gate working on real images. Fixtures are synthetic UI mockups
+  # (regenerate with examples/ci-visual-regression/make_fixtures.py): two
+  # nearly identical pairs pass, and a screenshots-only settings.png is
+  # reported NEW instead of failing, so a healthy run stays green.
+  visual-regression:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      THRESHOLD: "0.98"
+      MODEL_REPO: "dinov2-cpp-core/dinov2-small-gguf"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Materialize baseline/ and screenshots/ from fixtures
+        run: |
+          cp -r examples/ci-visual-regression/fixtures/baseline baseline
+          cp -r examples/ci-visual-regression/fixtures/screenshots screenshots
+          find baseline screenshots -type f | sort
+
+      - name: Download dinov2-cli release binary
+        run: |
+          TAG=$(basename "$(curl -sIL -o /dev/null -w '%{url_effective}' \
+            https://github.com/espetro/dinov2.cpp/releases/latest)")
+          curl -LO "https://github.com/espetro/dinov2.cpp/releases/download/$TAG/dinov2-$TAG-bin-ubuntu-x64.tar.gz"
+          curl -LO "https://github.com/espetro/dinov2.cpp/releases/download/$TAG/SHA256SUMS.txt"
+
+      - name: Verify checksums and unpack
+        run: |
+          TARBALL=$(ls dinov2-*-bin-ubuntu-x64.tar.gz)
+          grep " $TARBALL\$" SHA256SUMS.txt > check.sums
+          sha256sum -c check.sums
+          tar xzf "$TARBALL"
+          find . -name dinov2-cli -type f
+
+      - name: Download GGUF weight
+        run: |
+          mkdir -p models
+          curl -L -o models/model.gguf \
+            "https://huggingface.co/$MODEL_REPO/resolve/main/model.gguf"
+
+      - name: Embed baseline and screenshot fixtures
+        run: |
+          CLI=$(find . -name dinov2-cli -type f | head -1)
+          mkdir -p emb
+          embed() {
+            args=()
+            while IFS= read -r f; do args+=(-i "$f"); done \
+              < <(find "$1" -maxdepth 1 \( -name '*.png' -o -name '*.jpg' \) | sort)
+            if [ "${#args[@]}" -eq 0 ]; then
+              echo "no images in $1/"; return 0
+            fi
+            "$CLI" -m models/model.gguf --preprocess crop518 --batch 8 \
+              --print-embeddings "${args[@]}" > "$2"
+          }
+          embed baseline emb/baseline.jsonl
+          embed screenshots emb/current.jsonl
+
+      - name: Compare embeddings (cosine >= THRESHOLD)
+        run: |
+          python3 - <<'PY'
+          import json, math, os, sys
+
+          def load(path):
+              out = {}
+              for line in open(path):
+                  r = json.loads(line)
+                  out[os.path.basename(r["image"])] = r.get("pooled") or r["cls"]
+              return out
+
+          def cosine(a, b):
+              dot = sum(x * y for x, y in zip(a, b))
+              na = math.sqrt(sum(x * x for x in a))
+              nb = math.sqrt(sum(x * x for x in b))
+              return dot / (na * nb) if na and nb else 0.0
+
+          threshold = float(os.environ["THRESHOLD"])
+          base = load("emb/baseline.jsonl")
+          curr = load("emb/current.jsonl")
+          failed = []
+          for name, bvec in sorted(base.items()):
+              if name not in curr:
+                  print(f"MISSING  {name}: no current screenshot")
+                  failed.append(name)
+                  continue
+              s = cosine(bvec, curr[name])
+              print(f"{'ok' if s >= threshold else 'FAIL'}  {s:.4f}  {name}")
+              if s < threshold:
+                  failed.append(name)
+          for name in curr:
+              if name not in base:
+                  print(f"NEW      {name}: add to baseline/ if intentional")
+          if failed:
+              print(f"\n{len(failed)} screenshot(s) below {threshold}: {failed}")
+              sys.exit(1)
+          PY
