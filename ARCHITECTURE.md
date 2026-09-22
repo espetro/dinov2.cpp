@@ -412,7 +412,7 @@ Deliberately untracked by `.gitignore` and not in release archives:
 - [docs/benchmarks.md](docs/benchmarks.md): how to read the tables,
   methodology, reproducing locally.
 - [docs/hf-publishing.md](docs/hf-publishing.md): `HF_TOKEN` setup, the
-  `convert-and-publish-gguf` workflow, the 8 published HF repos.
+  `convert-and-publish-gguf` workflow, the 16 published HF repos.
 - [README.md](README.md): quickstart, downloads, why this fork exists.
 - [GitHub releases](https://github.com/espetro/dinov2.cpp/releases): per-tag
   release notes, breaking changes, and upgrade notes.

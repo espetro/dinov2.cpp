@@ -63,9 +63,18 @@ case "$VARIANT" in
     dinov2-with-registers-base)         HF_ID="facebook/dinov2-with-registers-base-imagenet1k-1-layer" ;;
     dinov2-with-registers-large)        HF_ID="facebook/dinov2-with-registers-large-imagenet1k-1-layer" ;;
     dinov2-with-registers-giant)        HF_ID="facebook/dinov2-with-registers-giant-imagenet1k-1-layer" ;;
+    dinov2-backbone-small)              HF_ID="facebook/dinov2-small" ;;
+    dinov2-backbone-base)               HF_ID="facebook/dinov2-base" ;;
+    dinov2-backbone-large)              HF_ID="facebook/dinov2-large" ;;
+    dinov2-backbone-giant)              HF_ID="facebook/dinov2-giant" ;;
+    dinov2-backbone-with-registers-small)   HF_ID="facebook/dinov2-with-registers-small" ;;
+    dinov2-backbone-with-registers-base)    HF_ID="facebook/dinov2-with-registers-base" ;;
+    dinov2-backbone-with-registers-large)   HF_ID="facebook/dinov2-with-registers-large" ;;
+    dinov2-backbone-with-registers-giant)   HF_ID="facebook/dinov2-with-registers-giant" ;;
     *)
         echo "ERROR: unknown variant '$VARIANT'" >&2
         echo "  known variants: dinov2-{small,base,large,giant} dinov2-with-registers-{small,base,large,giant}" >&2
+        echo "                  dinov2-backbone-{small,base,large,giant} dinov2-backbone-with-registers-{small,base,large,giant}" >&2
         exit 2
         ;;
 esac

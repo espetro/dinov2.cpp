@@ -132,11 +132,20 @@ cleanly with a message that classification requires a classifier GGUF rather
 than attempting to access missing tensors. A missing `num_register_tokens`
 metadata key is treated as zero registers for feature mode.
 
-The conversion and publishing workflows currently map the eight
-`imagenet1k-1-layer` checkpoints and their register-token counterparts. They do
-not publish backbone-only weights. Conversion and publishing of those weights
-remains a follow-up, and this documentation does not claim that published
-backbone-only files exist.
+The publishing workflow converts the backbone checkpoints alongside the eight
+`imagenet1k-1-layer` classifier variants and ships them as
+`dinov2-cpp-core/dinov2-backbone-{size}-gguf` (from `facebook/dinov2-{size}`)
+and `dinov2-cpp-core/dinov2-backbone-with-registers-{size}-gguf` (from
+`facebook/dinov2-with-registers-{size}`), where `{size}` is `small`, `base`,
+`large`, or `giant`:
+
+```bash
+hf download dinov2-cpp-core/dinov2-backbone-small-gguf --local-dir models
+dinov2-cli -m models/model.gguf -i assets/tench.jpg --print-embeddings
+```
+
+Use a backbone weight when you want the feature extractor without the
+classifier head; for `-c` pick one of the classifier repos above.
 
 DINOv2 task heads other than the existing ImageNet classifier, including depth
 and segmentation, are outside this interface. DINOv3 is a separate
