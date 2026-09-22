@@ -4,6 +4,11 @@
 // Public pure-C API for libdinov2. Opaque handles only: no ggml/gguf types
 // leak across the boundary. Compilable with gcc -std=c11. Unstable for the
 // 0.4.x line; see docs/stability.md.
+//
+// Threading: a dino_ctx is single-threaded; drive dino_encode calls on it
+// from one thread at a time. Distinct contexts are independent and may run
+// concurrently, even on the same model. The dino_model_* getters and
+// dino_model_label may be called from any thread while the model is alive.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -63,7 +68,12 @@ typedef enum dino_preprocess {
 typedef size_t (*dino_reader_callback_t)(void *userdata, void *output, uint64_t offset, size_t len);
 
 typedef struct dino_model_params {
-    const char *device;             // NULL = auto-select; else a ggml device name ("Metal", "CUDA0", "CPU", ...)
+    // NULL or "" = auto-select the best device; otherwise a ggml device name
+    // matched case-insensitively, e.g. "CPU", "MTL0" (first Metal device),
+    // "CUDA0". Names come from ggml_backend_dev_name(); C++ callers can list
+    // them via ggml_backend_dev_count()/ggml_backend_dev_get(), and debug
+    // builds log every registered device to stderr during backend loading.
+    const char *device;
     bool        require_classifier; // fail load unless the GGUF carries a classifier head + labels
 } dino_model_params;
 
@@ -107,7 +117,9 @@ DINO_API dino_model *dino_model_load_from_callback(dino_reader_callback_t read, 
                                                    struct dino_model_params params);
 DINO_API void        dino_model_free(dino_model *model);
 
-// Model metadata; 0/NULL when absent. label() returns NULL for classes without a label.
+// Model metadata; 0/NULL when absent. label() returns NULL for classes
+// without a label; the returned string is borrowed and stays valid until
+// dino_model_free().
 DINO_API uint32_t    dino_model_hidden_size(const dino_model *model);
 DINO_API uint32_t    dino_model_patch_size(const dino_model *model);
 DINO_API uint32_t    dino_model_n_register_tokens(const dino_model *model);
