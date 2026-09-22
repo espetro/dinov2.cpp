@@ -358,8 +358,16 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
     fprintf(stderr, "%s: ftype                  = %u\n", __func__, hparams.ftype);
     fprintf(stderr, "%s: qntvr                  = %d\n", __func__, qntvr);
 
+    // num_classes is plain metadata; read it unconditionally so a model
+    // loaded with classify=false still carries the real class count if a
+    // later call enables classification (the default is 1000, which would
+    // mis-size the probs read for any other count).
+    const auto num_classes = get_val_u32_optional(gguf_ctx, "num_classes");
+    if (num_classes && *num_classes > 0) {
+        hparams.num_classes = *num_classes;
+    }
+
     if (params.classify) {
-        const auto num_classes = get_val_u32_optional(gguf_ctx, "num_classes");
         if (!num_classes || *num_classes == 0) {
             fprintf(stderr,
                     "%s: classification requested but GGUF has no non-zero num_classes metadata; "
@@ -367,7 +375,6 @@ bool dino_model_load(const ImgSize img_size, const std::string &fname, dino_mode
                     __func__);
             return false;
         }
-        hparams.num_classes = *num_classes;
         fprintf(stderr, "%s: num_classes            = %u\n", __func__, hparams.num_classes);
 
         const auto has_tensor = [&](const char *name) { return ggml_get_tensor(tmp_ctx, name) != nullptr; };
