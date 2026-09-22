@@ -1,0 +1,62 @@
+name: extras
+
+# Tier-2 checks: non-blocking builds for optional targets. Every job here is
+# continue-on-error so a red run never gates a PR; treat failures as signal
+# for the wasm/example code paths drifting, not as a merge blocker.
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - master
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Emscripten build of wasm/dinov2-wasm.cpp (DINOV2_BUILD_WASM). Produces
+  # build-wasm/bin/dinov2-wasm.{js,wasm}; see docs/wasm.md.
+  wasm:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure (wasm preset)
+        run: cmake --preset wasm
+
+      - name: Build dinov2-wasm
+        run: cmake --build --preset wasm -j"$(nproc)"
+
+      - name: Check artifacts
+        run: |
+          ls -lh build-wasm/bin/dinov2-wasm.js build-wasm/bin/dinov2-wasm.wasm
+          node --check build-wasm/bin/dinov2-wasm.js 2>/dev/null || \
+            node --input-type=module --check < build-wasm/bin/dinov2-wasm.js
+
+      - name: Upload wasm bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: dinov2-wasm
+          path: |
+            build-wasm/bin/dinov2-wasm.js
+            build-wasm/bin/dinov2-wasm.wasm
+            wasm/index.html
+            wasm/main.js
+          retention-days: 14
+
+  # Placeholder for future tier-2 jobs: a llama.cpp-style http server example
+  # or the examples/ tree. Add jobs here with continue-on-error: true so they
+  # stay advisory.
