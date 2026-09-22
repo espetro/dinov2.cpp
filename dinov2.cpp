@@ -252,6 +252,56 @@ static bool dino_model_load_begin(dino_model &model, const dino_model_options &o
     return model.backend != nullptr;
 }
 
+// Releases the gguf metadata context, the scratch tensor context and any
+// partially initialized model state when a load fails; on success the
+// guard is dismissed and ownership moves to `model`.
+struct dino_load_guard {
+    dino_model   &model;
+    gguf_context *gguf_ctx = nullptr;
+    ggml_context *tmp_ctx  = nullptr;
+    bool          ok       = false;
+
+    ~dino_load_guard() {
+        gguf_free(gguf_ctx);
+        if (tmp_ctx) {
+            ggml_free(tmp_ctx);
+        }
+        if (ok) {
+            return;
+        }
+        model.tensors.clear();
+        // same teardown order as dino_model_unload
+        if (model.ctx) {
+            ggml_free(model.ctx);
+            model.ctx = nullptr;
+        }
+        if (model.buffer) {
+            ggml_backend_buffer_free(model.buffer);
+            model.buffer = nullptr;
+        }
+        if (model.backend) {
+            ggml_backend_free(model.backend);
+            model.backend = nullptr;
+        }
+    }
+};
+
+// Shared tail of the model-load triad (file / buffer / callback): validates
+// metadata and required tensors, uploads the weights to the backend.
+// fn_name stands in for __func__ so messages carry the entry point's name.
+static bool dino_model_load_finish(dino_model &model, const dino_model_options &options, gguf_context *gguf_ctx,
+                                   ggml_context *tmp_ctx, const char *fn_name);
+
+// Abort a load whose gguf source failed before the shared tail ran: frees the
+// possibly half-created scratch context and the backend.
+static bool dino_model_load_abort(dino_model &model, ggml_context *tmp_ctx) {
+    if (tmp_ctx) {
+        ggml_free(tmp_ctx);
+    }
+    dino_model_unload(model);
+    return false;
+}
+
 // load the model's weights from a file following the ggml format(gguf)
 bool dino_model_load(const std::string &fname, dino_model &model, const dino_model_options &options) {
     fprintf(stderr, "%s: loading model from '%s' - please wait\n", __func__, fname.c_str());
@@ -260,53 +310,78 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
     }
     fprintf(stderr, "%s: using %s backend\n", __func__, dino_backend_display_name(model.backend));
 
-    // Releases the gguf metadata context, the scratch tensor context and any
-    // partially initialized model state when the load fails; on success the
-    // guard is dismissed and ownership moves to `model`.
-    struct load_guard {
-        dino_model   &model;
-        gguf_context *gguf_ctx = nullptr;
-        ggml_context *tmp_ctx  = nullptr;
-        bool          ok       = false;
-
-        ~load_guard() {
-            gguf_free(gguf_ctx);
-            if (tmp_ctx) {
-                ggml_free(tmp_ctx);
-            }
-            if (ok) {
-                return;
-            }
-            model.tensors.clear();
-            // same teardown order as the CLI's free_model
-            if (model.ctx) {
-                ggml_free(model.ctx);
-                model.ctx = nullptr;
-            }
-            if (model.buffer) {
-                ggml_backend_buffer_free(model.buffer);
-                model.buffer = nullptr;
-            }
-            if (model.backend) {
-                ggml_backend_free(model.backend);
-                model.backend = nullptr;
-            }
-        }
-    };
-    load_guard guard{model};
-
     struct ggml_context    *tmp_ctx     = nullptr;
     struct gguf_init_params gguf_params = {
         /*.no_alloc   =*/false,
         /*.ctx        =*/&tmp_ctx,
     };
     gguf_context *gguf_ctx = gguf_init_from_file(fname.c_str(), gguf_params);
-    guard.gguf_ctx         = gguf_ctx;
-    guard.tmp_ctx          = tmp_ctx;
     if (!gguf_ctx) {
         fprintf(stderr, "%s: gguf_init_from_file() failed\n", __func__);
+        return dino_model_load_abort(model, tmp_ctx);
+    }
+    return dino_model_load_finish(model, options, gguf_ctx, tmp_ctx, __func__);
+}
+
+// load the model's weights from an in-memory GGUF image (the bytes are copied
+// during load; the caller may release data on return)
+bool dino_model_load_buffer(const void *data, size_t size, dino_model &model, const dino_model_options &options) {
+    fprintf(stderr, "%s: loading model from a %zu-byte buffer - please wait\n", __func__, size);
+    if (data == nullptr || size == 0) {
+        fprintf(stderr, "%s: empty model buffer\n", __func__);
         return false;
     }
+    if (!dino_model_load_begin(model, options)) {
+        return false;
+    }
+    fprintf(stderr, "%s: using %s backend\n", __func__, dino_backend_display_name(model.backend));
+
+    struct ggml_context    *tmp_ctx     = nullptr;
+    struct gguf_init_params gguf_params = {
+        /*.no_alloc   =*/false,
+        /*.ctx        =*/&tmp_ctx,
+    };
+    gguf_context *gguf_ctx = gguf_init_from_buffer(data, size, gguf_params);
+    if (!gguf_ctx) {
+        fprintf(stderr, "%s: gguf_init_from_buffer() failed\n", __func__);
+        return dino_model_load_abort(model, tmp_ctx);
+    }
+    return dino_model_load_finish(model, options, gguf_ctx, tmp_ctx, __func__);
+}
+
+// load the model's weights through a streaming read callback (mmap-friendly;
+// no size limit: max_chunk_read = 0, max_expected_size = UINT64_MAX)
+bool dino_model_load_callback(dino_reader_fn read, void *userdata, dino_model &model,
+                              const dino_model_options &options) {
+    fprintf(stderr, "%s: loading model from a reader callback - please wait\n", __func__);
+    if (read == nullptr) {
+        fprintf(stderr, "%s: no reader callback\n", __func__);
+        return false;
+    }
+    if (!dino_model_load_begin(model, options)) {
+        return false;
+    }
+    fprintf(stderr, "%s: using %s backend\n", __func__, dino_backend_display_name(model.backend));
+
+    struct ggml_context    *tmp_ctx     = nullptr;
+    struct gguf_init_params gguf_params = {
+        /*.no_alloc   =*/false,
+        /*.ctx        =*/&tmp_ctx,
+    };
+    gguf_context *gguf_ctx =
+        gguf_init_from_callback(read, userdata, /*max_chunk_read*/ 0, /*max_expected_size*/ UINT64_MAX, gguf_params);
+    if (!gguf_ctx) {
+        fprintf(stderr, "%s: gguf_init_from_callback() failed\n", __func__);
+        return dino_model_load_abort(model, tmp_ctx);
+    }
+    return dino_model_load_finish(model, options, gguf_ctx, tmp_ctx, __func__);
+}
+
+static bool dino_model_load_finish(dino_model &model, const dino_model_options &options, gguf_context *gguf_ctx,
+                                   ggml_context *tmp_ctx, const char *fn_name) {
+    dino_load_guard guard{model};
+    guard.gguf_ctx = gguf_ctx;
+    guard.tmp_ctx  = tmp_ctx;
 
     // required metadata keys fail cleanly instead of aborting inside gguf
     const auto required_u32 = [&](const char *key, uint32_t &out) {
@@ -338,7 +413,7 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
                 "%s: invalid gguf hparams: hidden_size=%u num_attention_heads=%u patch_size=%u img_size=%u "
                 "(requires patch_size > 0, img_size %% patch_size == 0, hidden_size %% num_attention_heads == 0, "
                 "hidden_size %% 4 == 0)\n",
-                __func__, hparams.hidden_size, hparams.num_attention_heads, hparams.patch_size, hparams.img_size);
+                fn_name, hparams.hidden_size, hparams.num_attention_heads, hparams.patch_size, hparams.img_size);
         return false;
     }
 
@@ -346,12 +421,12 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
     const bool has_register_tokens = ggml_get_tensor(tmp_ctx, "embeddings.register_tokens") != nullptr;
     if (has_register_tokens && !num_register_tokens) {
         fprintf(stderr, "%s: GGUF has embeddings.register_tokens but is missing num_register_tokens metadata\n",
-                __func__);
+                fn_name);
         return false;
     }
     if (has_register_tokens != (num_register_tokens && *num_register_tokens > 0)) {
         fprintf(stderr, "%s: GGUF register-token metadata and embeddings.register_tokens tensor are inconsistent\n",
-                __func__);
+                fn_name);
         return false;
     }
     // Backbone-only converters may omit this metadata because zero registers is
@@ -367,7 +442,7 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
                     "%s: embeddings.register_tokens has shape [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64
                     "] but expected "
                     "[%u, %u, 1, 1] (hidden_size, num_register_tokens, singleton trailing dimensions)\n",
-                    __func__, register_tensor->ne[0], register_tensor->ne[1], register_tensor->ne[2],
+                    fn_name, register_tensor->ne[0], register_tensor->ne[1], register_tensor->ne[2],
                     register_tensor->ne[3], hparams.hidden_size, hparams.num_register_tokens);
             return false;
         }
@@ -375,14 +450,14 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
 
     const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
-    fprintf(stderr, "%s: hidden_size            = %u\n", __func__, hparams.hidden_size);
-    fprintf(stderr, "%s: num_hidden_layers      = %u\n", __func__, hparams.num_hidden_layers);
-    fprintf(stderr, "%s: num_register_tokens    = %u\n", __func__, hparams.num_register_tokens);
-    fprintf(stderr, "%s: num_attention_heads    = %u\n", __func__, hparams.num_attention_heads);
-    fprintf(stderr, "%s: patch_size             = %u\n", __func__, hparams.patch_size);
-    fprintf(stderr, "%s: img_size               = %u\n", __func__, hparams.img_size);
-    fprintf(stderr, "%s: ftype                  = %u\n", __func__, hparams.ftype);
-    fprintf(stderr, "%s: qntvr                  = %d\n", __func__, qntvr);
+    fprintf(stderr, "%s: hidden_size            = %u\n", fn_name, hparams.hidden_size);
+    fprintf(stderr, "%s: num_hidden_layers      = %u\n", fn_name, hparams.num_hidden_layers);
+    fprintf(stderr, "%s: num_register_tokens    = %u\n", fn_name, hparams.num_register_tokens);
+    fprintf(stderr, "%s: num_attention_heads    = %u\n", fn_name, hparams.num_attention_heads);
+    fprintf(stderr, "%s: patch_size             = %u\n", fn_name, hparams.patch_size);
+    fprintf(stderr, "%s: img_size               = %u\n", fn_name, hparams.img_size);
+    fprintf(stderr, "%s: ftype                  = %u\n", fn_name, hparams.ftype);
+    fprintf(stderr, "%s: qntvr                  = %d\n", fn_name, qntvr);
 
     // num_classes is plain metadata; read it unconditionally so a model
     // loaded with classify=false still carries the real class count if a
@@ -398,17 +473,17 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
             fprintf(stderr,
                     "%s: classification requested but GGUF has no non-zero num_classes metadata; "
                     "backbone-only models support feature mode only\n",
-                    __func__);
+                    fn_name);
             return false;
         }
-        fprintf(stderr, "%s: num_classes            = %u\n", __func__, hparams.num_classes);
+        fprintf(stderr, "%s: num_classes            = %u\n", fn_name, hparams.num_classes);
 
         const auto has_tensor = [&](const char *name) { return ggml_get_tensor(tmp_ctx, name) != nullptr; };
         if (!has_tensor("classifier.weight") || !has_tensor("classifier.bias")) {
             fprintf(stderr,
                     "%s: classification requested but GGUF is missing classifier.weight or classifier.bias; "
                     "backbone-only models support feature mode only\n",
-                    __func__);
+                    fn_name);
             return false;
         }
 
@@ -417,7 +492,7 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
         for (uint32_t i = 0; i < hparams.num_classes; ++i) {
             const std::string key = std::to_string(i);
             if (gguf_find_key(gguf_ctx, key.c_str()) < 0) {
-                fprintf(stderr, "%s: classification GGUF is missing label metadata for class %u\n", __func__, i);
+                fprintf(stderr, "%s: classification GGUF is missing label metadata for class %u\n", fn_name, i);
                 return false;
             }
             model.hparams.id2label[static_cast<int>(i)] = get_val_str(gguf_ctx, key.c_str());
@@ -429,6 +504,17 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
     model.has_classifier = num_classes && *num_classes > 0 &&
                            ggml_get_tensor(tmp_ctx, "classifier.weight") != nullptr &&
                            ggml_get_tensor(tmp_ctx, "classifier.bias") != nullptr;
+
+    // opportunistic labels for loads that did not require a classifier:
+    // tolerate gaps so dino_model_label works without the strict preflight
+    if (model.has_classifier && !options.require_classifier) {
+        for (uint32_t i = 0; i < hparams.num_classes; ++i) {
+            const std::string key = std::to_string(i);
+            if (gguf_find_key(gguf_ctx, key.c_str()) >= 0) {
+                model.hparams.id2label[static_cast<int>(i)] = get_val_str(gguf_ctx, key.c_str());
+            }
+        }
+    }
 
     hparams.ftype %= GGML_QNT_VERSION_FACTOR;
 
@@ -483,7 +569,7 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
         fprintf(stderr,
                 "%s: embeddings.position_embeddings has shape [%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64
                 "] (%s) but expected [%u, %" PRId64 ", 1, 1] (f32; hidden_size, (img_size/patch_size)^2 + 1)\n",
-                __func__, pos_embeds->ne[0], pos_embeds->ne[1], pos_embeds->ne[2], pos_embeds->ne[3],
+                fn_name, pos_embeds->ne[0], pos_embeds->ne[1], pos_embeds->ne[2], pos_embeds->ne[3],
                 ggml_type_name(pos_embeds->type), hparams.hidden_size, pos_rows);
         return false;
     }
@@ -497,7 +583,7 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
     };
     model.ctx = ggml_init(model_params);
     if (!model.ctx) {
-        fprintf(stderr, "%s: ggml_init() failed\n", __func__);
+        fprintf(stderr, "%s: ggml_init() failed\n", fn_name);
         return false;
     }
     for (int i = 0; i < num_tensors; i++) {
@@ -511,7 +597,7 @@ bool dino_model_load(const std::string &fname, dino_model &model, const dino_mod
 
     model.buffer = ggml_backend_alloc_ctx_tensors(model.ctx, model.backend);
     if (!model.buffer) {
-        fprintf(stderr, "%s: failed to allocate model buffer on the backend\n", __func__);
+        fprintf(stderr, "%s: failed to allocate model buffer on the backend\n", fn_name);
         return false;
     }
     // copy tensors from main memory to backend; tmp_ctx must stay alive until

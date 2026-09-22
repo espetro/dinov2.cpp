@@ -158,6 +158,19 @@ ImgSize dino_feature_output_size(const Image &img, const dino_hparams &hparams, 
 
 bool dino_model_load(const std::string &fname, dino_model &model, const dino_model_options &options);
 
+// Same loader fed from an in-memory GGUF image; the bytes are copied during
+// the load so the caller may release data on return.
+bool dino_model_load_buffer(const void *data, size_t size, dino_model &model, const dino_model_options &options);
+
+// Streaming reader for dino_model_load_callback: read up to `len` bytes at
+// `offset` into `output`, return the number of bytes read. Same contract as
+// gguf_reader_callback_t.
+using dino_reader_fn = size_t (*)(void *userdata, void *output, uint64_t offset, size_t len);
+
+// Same loader fed through a streaming read callback (mmap-friendly).
+bool dino_model_load_callback(dino_reader_fn read, void *userdata, dino_model &model,
+                              const dino_model_options &options);
+
 // Release the ggml context, backend buffer and backend held by model.
 void dino_model_unload(dino_model &model);
 
