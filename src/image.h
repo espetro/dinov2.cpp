@@ -17,6 +17,11 @@ struct ImageF {
 // Load an image from disk as 3-channel RGB (8 bit per channel).
 Image load_image(const std::string &path);
 
+// Decode an image from an in-memory buffer (PNG/JPEG/whatever stb supports)
+// as 3-channel RGB. Used by tier-2 consumers that receive upload bytes
+// instead of file paths (tools/server).
+Image load_image_from_memory(const uint8_t *data, size_t size);
+
 // Write an 8-bit RGB image to disk as PNG.
 void write_png(const std::string &path, const Image &img);
 

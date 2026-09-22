@@ -9,6 +9,7 @@ constexpr float IMAGENET_DEFAULT_STD[3]  = {0.229f, 0.224f, 0.225f};
 #include "stb_image_write.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,26 @@ Image load_image(const std::string &path) {
     uint8_t *pixels = stbi_load(path.c_str(), &w, &h, &n, 3);
     if (!pixels) {
         fprintf(stderr, "%s: failed to load image from '%s': %s\n", __func__, path.c_str(), stbi_failure_reason());
+        return img;
+    }
+    img.nx = w;
+    img.ny = h;
+    img.c  = 3;
+    img.data.assign(pixels, pixels + (size_t)w * h * 3);
+    stbi_image_free(pixels);
+    return img;
+}
+
+Image load_image_from_memory(const uint8_t *data, size_t size) {
+    Image img;
+    if (!data || size == 0 || size > (size_t)INT_MAX) {
+        fprintf(stderr, "%s: invalid buffer (size %zu)\n", __func__, size);
+        return img;
+    }
+    int      w, h, n;
+    uint8_t *pixels = stbi_load_from_memory(data, (int)size, &w, &h, &n, 3);
+    if (!pixels) {
+        fprintf(stderr, "%s: failed to decode image: %s\n", __func__, stbi_failure_reason());
         return img;
     }
     img.nx = w;
