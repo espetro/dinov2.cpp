@@ -52,6 +52,19 @@ embind. For a node smoke test reconfigure with
 
 ## Running the demo
 
+### Hosted demo (GitHub Pages)
+
+`.github/workflows/pages.yml` rebuilds the wasm bundle on every push to
+`main` that touches `wasm/` and deploys `index.html`, `main.js` and
+`dinov2-wasm.{js,wasm}` to GitHub Pages (it can also be triggered manually
+via `workflow_dispatch`). One-time prerequisite: in the repo settings under
+**Pages**, set **Source** to "GitHub Actions"; the `github-pages`
+environment is created automatically on first deploy. The page defaults to
+fetching the `dinov2-with-registers-small-gguf` model straight from Hugging
+Face, so no weight needs to be committed or served.
+
+### Local
+
 The demo (`wasm/index.html` + `wasm/main.js`) expects the build artifacts
 next to it:
 
@@ -63,12 +76,14 @@ cd wasm && python3 -m http.server 8000
 
 Model source, in the URL field:
 
-- `model.gguf` (default): fetched relative to the page, so drop a GGUF next to
+- `https://huggingface.co/dinov2-cpp-core/dinov2-with-registers-small-gguf/resolve/main/model.gguf`
+  (default): the ViT-S with registers variant, fetched straight from Hugging
+  Face. Register tokens give cleaner patch heatmaps. huggingface.co
+  `/resolve/` URLs send CORS headers (verified), so remote URLs work when the
+  host allows them.
+- `model.gguf`: fetched relative to the page, so drop a GGUF next to
   `index.html`. Get one with `hf download dinov2-cpp-core/dinov2-small-gguf
   model.gguf --local-dir wasm` (~50 MB f16 ViT-S).
-- A remote URL also works when the host sends CORS headers. huggingface.co
-  `/resolve/` URLs do (verified), e.g.
-  `https://huggingface.co/dinov2-cpp-core/dinov2-small-gguf/resolve/main/model.gguf`.
 
 Then pick two images: the page decodes them via `createImageBitmap` + canvas,
 encodes each (RGB8/RGBA8 in, preprocessing happens inside the library), and
