@@ -13,10 +13,86 @@ Hand-edit only the lines **above** the `<!-- git-cliff: end of header -->`
 marker; everything below is regenerated.
 
 <!-- git-cliff: end of header -->
-## [Unreleased]
+## [0.5.0] - 2026-09-22
+
+### Added
+- Load models from buffer and callback readers
+- Public C API in include/dinov2.h + src/dinov2-c.cpp
+- Add tier-2 Emscripten wasm target with embind shim over the C API
+- Add minimal browser demo for the wasm build
+- Add in-memory image decode helper
+- Add tier-2 dinov2-server HTTP embeddings microservice
+- Backbone-only GGUF publishing matrix (#23)
+- GitHub Pages wasm demo + visual-regression CI proof (#26)
+- *(examples)* Scratch container demo (45 MB image) (#27)
+- *(wasm)* Repo links, encode feedback, unload model button
+
+### Fixed
+- *(ci)* Fetch full history in changelog tag workflow
+- *(loader)* Free tmp_ctx and validate GGUF before use
+- *(inference)* Read tensors through the backend, not ->data
+- *(attention)* Stop zero-padding the K/V seq dim for flash attention
+- *(embeddings)* Correct pos-embed early return and collapse interp loop
+- *(core)* Audit cleanup items in predict, graph sizing, and CLI
+- *(loader)* Guard ggml_backend_cpu_init failure
+- *(loader)* Read num_classes metadata unconditionally
+- *(inference)* Size the cgraph node capacity to the layer count
+- Check gguf kv types before reading values
+- Stop C++ exceptions at the C boundary
+- Drop stale outputs on any failed dino_encode
+- Validate topk only when classify is requested
+- Claim hygiene (webp bug, limitations, ARM bench) (#21)
 
 ### Changed
 - *(changelog)* Regenerate for v0.4.0
+- *(changelog)* Correct v0.4.0 regen, add link rows, bump footer
+- Untrack .superpowers and .agents/plans
+- Point at latest release instead of hardcoded versions
+- *(parity)* Record audit-hardening rerun for both small checkpoints
+- *(cli)* Cover the -c/-o parse-time rejection
+- *(cli)* Sync with current -o and -s behavior
+- *(build)* Note -s is a no-op and drop em dashes
+- *(architecture)* Refresh help output and public API surface
+- *(spec)* Design library extraction and C API
+- Split CLI helpers and params out of the engine
+- Introduce dino_ctx owning allocator and run state
+- Run inference through ggml_backend_sched and registry backend init
+- C API coverage on synthetic GGUF fixtures
+- Library layering, README C API section, stability stub
+- Clang-format-18 over refactored sources
+- Move internal header to src/dinov2-impl.h
+- Move per-chunk outputs into ctx last_outputs
+- Warm only the backend registry in dino_backend_init
+- Fix device names and fill contract gaps in the C header
+- Cover the C API and remaining test sources in the format gate
+- Wire orphaned quality checks into a contract job
+- Add nightly parity workflow
+- Add tier-2 extras workflow with a wasm build job
+- Document the wasm build, demo and JS API
+- *(examples)* Add ci-visual-regression GitHub Action
+- *(examples)* Add minimal folder dedup example
+- Expand stability contract and add tiers page
+- Point architecture and readme at tier-2 surfaces
+- Add server and examples jobs to extras workflow
+- Marketing drafts and trust page (#22)
+- PCA demo GIF hero and server asciinema demo (#24)
+- *(examples)* Add measured dedup run report on a synthetic corpus (#25)
+- *(readme)* Consolidate entry points, benchmarks, and doc links (#28)
+- *(hf)* Mark backbone GGUF repos as pending publish
+- *(gguf)* Let single-variant dispatch reach the publish job
+- *(license)* Add Joaquin Terrasa copyright line
+- Bump version to 0.5.0
+- Relax flash-attn parity tolerance for sanitizer fp noise
+- *(release)* Add v0.5.0 changelog links
+
+### Miscellaneous
+- Merge pull request #15 from espetro/changelog/v0.4.0
+- Merge pull request #16 from espetro/fix/audit-hardening
+- Extract a dinov2 library target
+- Merge pull request #17 from espetro/refactor/library-and-c-api
+- Merge pull request #18 from espetro/ci/wire-checks
+- Merge pull request #19 from espetro/feat/wasm
+- Merge pull request #20 from espetro/feat/tier2-surfaces
 ## [0.4.0] - 2026-09-21
 
 ### Added
@@ -438,5 +514,6 @@ marker; everything below is regenerated.
 must be added by hand when a new tag ships, since git-cliff does
 not derive a comparison base URL automatically. -->
 
-[Unreleased]: https://github.com/espetro/dinov2.cpp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/espetro/dinov2.cpp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/espetro/dinov2.cpp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/espetro/dinov2.cpp/compare/v0.3.0...v0.4.0
